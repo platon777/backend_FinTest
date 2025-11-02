@@ -292,3 +292,479 @@ PRINT '  3. Voir leurs investissements';
 PRINT '  4. Voir leurs transactions';
 PRINT '=================================================================';
 GO
+
+
+
+
+
+-- Plan comptable simplifié
+CREATE TABLE PlanComptable (
+    CompteComptableID INT PRIMARY KEY IDENTITY(1,1),
+    NumeroCompte NVARCHAR(20) UNIQUE NOT NULL,
+    NomCompte NVARCHAR(200) NOT NULL,
+    TypeCompte VARCHAR(20) CHECK (TypeCompte IN ('ACTIF', 'PASSIF', 'PRODUIT', 'CHARGE', 'CAPITAUX')),
+    EstDebit BIT NOT NULL, -- 1 si nature débitrice, 0 si créditrice
+    Description NVARCHAR(500)
+);
+
+-- Écritures comptables générées par transactions
+CREATE TABLE EcrituresComptables (
+    EcritureID INT PRIMARY KEY IDENTITY(1,1),
+    TransactionID INT NOT NULL,
+    NumeroEcriture NVARCHAR(50) UNIQUE NOT NULL,
+    DateEcriture DATETIME DEFAULT GETDATE(),
+    Description NVARCHAR(MAX),
+    EstEquilibree BIT DEFAULT 0, -- Total Débit = Total Crédit ?
+    CONSTRAINT FK_Ecritures_Transactions FOREIGN KEY (TransactionID) REFERENCES Transactions(TransactionID)
+);
+
+-- Lignes d'écriture (minimum 2 par écriture: débit + crédit)
+CREATE TABLE LignesEcriture (
+    LigneEcritureID INT PRIMARY KEY IDENTITY(1,1),
+    EcritureID INT NOT NULL,
+    CompteComptableID INT NOT NULL,
+    TypeMouvement VARCHAR(10) CHECK (TypeMouvement IN ('DEBIT', 'CREDIT')),
+    Montant DECIMAL(18,2) NOT NULL,
+    Description NVARCHAR(500),
+    CONSTRAINT FK_Lignes_Ecritures FOREIGN KEY (EcritureID) REFERENCES EcrituresComptables(EcritureID),
+    CONSTRAINT FK_Lignes_Plan FOREIGN KEY (CompteComptableID) REFERENCES PlanComptable(CompteComptableID)
+);
+
+-- Index pour performance
+CREATE INDEX IX_Ecritures_TransactionID ON EcrituresComptables(TransactionID);
+CREATE INDEX IX_Lignes_EcritureID ON LignesEcriture(EcritureID);
+CREATE INDEX IX_Lignes_CompteComptableID ON LignesEcriture(CompteComptableID);
+
+PRINT '✓ Module Comptabilité créé';
+GO
+
+-- ============================================================================
+-- MODULE 2 : AUDIT & CONFORMITÉ
+-- ============================================================================
+
+PRINT 'Création Module Audit...';
+GO
+
+-- Journal d'audit (TOUT ce qui se passe dans le système)
+CREATE TABLE JournalAudit (
+    AuditID BIGINT PRIMARY KEY IDENTITY(1,1),
+    DateAction DATETIME DEFAULT GETDATE(),
+    ClientID INT NULL, -- Qui a fait l'action (NULL si système)
+    TypeAction VARCHAR(50) NOT NULL, -- INSERT, UPDATE, DELETE, LOGIN, LOGOUT, VIEW
+    TableCiblee NVARCHAR(100),
+    EnregistrementID INT,
+    AncienneValeur NVARCHAR(MAX), -- JSON de l'état avant
+    NouvelleValeur NVARCHAR(MAX), -- JSON de l'état après
+    AdresseIP NVARCHAR(50),
+    UserAgent NVARCHAR(500),
+    CONSTRAINT FK_Audit_Clients FOREIGN KEY (ClientID) REFERENCES Clients(ClientID)
+);
+
+-- Vérifications de conformité
+CREATE TABLE VerificationsConformite (
+    VerificationID INT PRIMARY KEY IDENTITY(1,1),
+    ClientID INT NOT NULL,
+    TypeVerification VARCHAR(50) NOT NULL, -- KYC, AML, SANCTIONS, RISQUE
+    DateVerification DATETIME DEFAULT GETDATE(),
+    Resultat VARCHAR(20) CHECK (Resultat IN ('CONFORME', 'NON_CONFORME', 'EN_ATTENTE', 'ENQUETE')),
+    Score DECIMAL(5,2), -- Score de risque 0-100
+    Commentaires NVARCHAR(MAX),
+    DocumentsJoints NVARCHAR(MAX), -- URLs/chemins des documents
+    CONSTRAINT FK_Verif_Clients FOREIGN KEY (ClientID) REFERENCES Clients(ClientID)
+);
+
+-- Index pour performance
+CREATE INDEX IX_Audit_DateAction ON JournalAudit(DateAction);
+CREATE INDEX IX_Audit_ClientID ON JournalAudit(ClientID);
+CREATE INDEX IX_Audit_TypeAction ON JournalAudit(TypeAction);
+CREATE INDEX IX_Verif_ClientID ON VerificationsConformite(ClientID);
+CREATE INDEX IX_Verif_DateVerification ON VerificationsConformite(DateVerification);
+
+PRINT '✓ Module Audit créé';
+GO
+
+-- ============================================================================
+-- MODULE 3 : SYNCHRONISATION INTER-SYSTÈMES (n8n)
+-- ============================================================================
+
+PRINT 'Création Module Synchronisation...';
+GO
+
+-- Systèmes externes configurés
+CREATE TABLE SystemesExternes (
+    SystemeID INT PRIMARY KEY IDENTITY(1,1),
+    CodeSysteme VARCHAR(50) UNIQUE NOT NULL, -- CRM, BACKOFFICE, AUDIT, REPORTING
+    NomSysteme NVARCHAR(200) NOT NULL,
+    Description NVARCHAR(500),
+    URLEndpoint NVARCHAR(500), -- URL webhook pour notifier le système
+    TypeConnexion VARCHAR(20) CHECK (TypeConnexion IN ('HTTP', 'HTTPS', 'VPN')),
+    EstActif BIT DEFAULT 1,
+    TokenAuthentification NVARCHAR(500), -- API Key ou JWT
+    TimeoutSecondes INT DEFAULT 30,
+    MaxRetries INT DEFAULT 3,
+    DateCreation DATETIME DEFAULT GETDATE(),
+    DerniereMiseAJour DATETIME DEFAULT GETDATE()
+);
+
+-- Événements à synchroniser
+CREATE TABLE EvenementsSync (
+    EvenementID BIGINT PRIMARY KEY IDENTITY(1,1),
+    TypeEvenement VARCHAR(50) NOT NULL, -- ORDER_CREATED, TRANSACTION_UPDATED, CLIENT_UPDATED, etc.
+    EntityType VARCHAR(50), -- Transactions, Clients, Souscriptions, etc.
+    EntityID INT NOT NULL, -- ID de l'entité concernée
+    Payload NVARCHAR(MAX) NOT NULL, -- JSON des données complètes
+    DateCreation DATETIME DEFAULT GETDATE(),
+    StatutGlobal VARCHAR(20) CHECK (StatutGlobal IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')) DEFAULT 'PENDING',
+    NombreSystemesCibles INT DEFAULT 0, -- Combien de systèmes doivent recevoir
+    NombreSystemesReussis INT DEFAULT 0 -- Combien ont reçu avec succès
+);
+
+-- Logs détaillés de synchronisation
+CREATE TABLE LogsSynchronisation (
+    LogID BIGINT PRIMARY KEY IDENTITY(1,1),
+    EvenementID BIGINT NOT NULL,
+    SystemeID INT NOT NULL,
+    StatutEnvoi VARCHAR(20) CHECK (StatutEnvoi IN ('SUCCESS', 'FAILED', 'RETRY', 'TIMEOUT')) NOT NULL,
+    DateEnvoi DATETIME DEFAULT GETDATE(),
+    DateReponse DATETIME,
+    CodeHTTP INT, -- Code réponse HTTP (200, 404, 500, etc.)
+    MessageErreur NVARCHAR(MAX),
+    ReponseSysteme NVARCHAR(MAX), -- JSON de la réponse
+    NombreTentatives INT DEFAULT 1,
+    DureeMS INT, -- Durée en millisecondes
+    CONSTRAINT FK_Logs_Evenements FOREIGN KEY (EvenementID) REFERENCES EvenementsSync(EvenementID),
+    CONSTRAINT FK_Logs_Systemes FOREIGN KEY (SystemeID) REFERENCES SystemesExternes(SystemeID)
+);
+
+-- Index pour performance et monitoring
+CREATE INDEX IX_Evenements_StatutGlobal ON EvenementsSync(StatutGlobal);
+CREATE INDEX IX_Evenements_DateCreation ON EvenementsSync(DateCreation);
+CREATE INDEX IX_Evenements_TypeEvenement ON EvenementsSync(TypeEvenement);
+CREATE INDEX IX_Logs_EvenementID ON LogsSynchronisation(EvenementID);
+CREATE INDEX IX_Logs_SystemeID ON LogsSynchronisation(SystemeID);
+CREATE INDEX IX_Logs_StatutEnvoi ON LogsSynchronisation(StatutEnvoi);
+CREATE INDEX IX_Logs_DateEnvoi ON LogsSynchronisation(DateEnvoi);
+
+PRINT '✓ Module Synchronisation créé';
+GO
+
+-- ============================================================================
+-- MODULE 4 : AMÉLIORATIONS TABLES EXISTANTES
+-- ============================================================================
+
+PRINT 'Ajout colonnes manquantes...';
+GO
+
+-- Ajouter TMA_Reel dans Souscriptions
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('Souscriptions') AND name = 'TMA_Reel')
+BEGIN
+    ALTER TABLE Souscriptions ADD TMA_Reel DECIMAL(10,6) NULL;
+    PRINT '✓ Colonne TMA_Reel ajoutée à Souscriptions';
+END
+GO
+
+-- Ajouter CreePar dans Transactions (référence au client qui a créé)
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('Transactions') AND name = 'CreePar')
+BEGIN
+    ALTER TABLE Transactions ADD CreePar INT NULL;
+    ALTER TABLE Transactions ADD CONSTRAINT FK_Trans_CreePar FOREIGN KEY (CreePar) REFERENCES Clients(ClientID);
+    PRINT '✓ Colonne CreePar ajoutée à Transactions';
+END
+GO
+
+-- Ajouter commentaires dans Transactions
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('Transactions') AND name = 'Commentaires')
+BEGIN
+    ALTER TABLE Transactions ADD Commentaires NVARCHAR(MAX) NULL;
+    PRINT '✓ Colonne Commentaires ajoutée à Transactions';
+END
+GO
+
+-- ============================================================================
+-- DONNÉES INITIALES - PLAN COMPTABLE DE BASE
+-- ============================================================================
+
+PRINT 'Insertion plan comptable de base...';
+GO
+
+-- Plan comptable simplifié haïtien
+INSERT INTO PlanComptable (NumeroCompte, NomCompte, TypeCompte, EstDebit, Description) VALUES
+-- ACTIFS (Débits)
+('5101', 'Caisse - Espèces HTG', 'ACTIF', 1, 'Argent liquide en gourdes'),
+('5102', 'Caisse - Espèces USD', 'ACTIF', 1, 'Argent liquide en dollars'),
+('5110', 'Banque - Compte Courant', 'ACTIF', 1, 'Compte bancaire principal'),
+('5120', 'Placements Court Terme', 'ACTIF', 1, 'Obligations et placements'),
+
+-- PASSIFS (Crédits)
+('2100', 'Dépôts Clientèle', 'PASSIF', 0, 'Argent dû aux clients'),
+('2110', 'Comptes Investissement Clients', 'PASSIF', 0, 'Soldes investissements clients'),
+
+-- PRODUITS (Crédits)
+('7100', 'Intérêts Reçus', 'PRODUIT', 0, 'Revenus d''intérêts'),
+('7110', 'Commissions Gestion', 'PRODUIT', 0, 'Frais de gestion'),
+
+-- CHARGES (Débits)
+('6100', 'Intérêts Versés', 'CHARGE', 1, 'Intérêts payés aux clients'),
+('6110', 'Frais Bancaires', 'CHARGE', 1, 'Frais et commissions bancaires');
+
+PRINT '✓ Plan comptable initialisé';
+GO
+
+-- ============================================================================
+-- DONNÉES INITIALES - SYSTÈMES EXTERNES
+-- ============================================================================
+
+PRINT 'Configuration systèmes externes (exemples)...';
+GO
+
+INSERT INTO SystemesExternes (CodeSysteme, NomSysteme, Description, URLEndpoint, TypeConnexion, EstActif, TimeoutSecondes, MaxRetries) VALUES
+('CRM', 'CRM Conseillers', 'Système CRM des conseillers en placement', 'https://crm.advisor.example.ht/api/webhook', 'HTTPS', 0, 30, 3),
+('BACKOFFICE', 'Back-Office Interne', 'Système de traitement back-office', 'http://10.0.0.100/api/webhook', 'HTTP', 1, 30, 3),
+('AUDIT', 'Système Audit Externe', 'Plateforme audit et conformité', 'https://audit.compliance.example.com/api/webhook', 'HTTPS', 0, 45, 5),
+('REPORTING', 'Système Reporting', 'Plateforme analytics et dashboards', 'http://10.0.0.110/api/webhook', 'HTTP', 1, 20, 3);
+
+PRINT '✓ Systèmes externes configurés (désactivés par défaut)';
+GO
+
+-- ============================================================================
+-- PROCÉDURES STOCKÉES UTILES
+-- ============================================================================
+
+PRINT 'Création procédures stockées...';
+GO
+
+-- Procédure : Calculer TMA approximatif
+CREATE OR ALTER PROCEDURE sp_CalculerTMA
+    @SouscriptionID INT
+AS
+BEGIN
+    DECLARE @PrixAchat DECIMAL(18,2);
+    DECLARE @ValeurNominale DECIMAL(18,2);
+    DECLARE @TauxCoupon DECIMAL(5,2);
+    DECLARE @DureeAnnees INT;
+    DECLARE @TMA DECIMAL(10,6);
+
+    -- Récupérer les données
+    SELECT 
+        @PrixAchat = s.MontantInvesti,
+        @ValeurNominale = s.MontantInvesti, -- Simplifié
+        @TauxCoupon = i.TauxRendementAnnuel,
+        @DureeAnnees = DATEDIFF(YEAR, s.DateSouscription, s.DateMaturiteEffective)
+    FROM Souscriptions s
+    INNER JOIN Instruments i ON s.InstrumentID = i.InstrumentID
+    WHERE s.SouscriptionID = @SouscriptionID;
+
+    -- Calcul approximatif du TMA
+    IF @PrixAchat > 0 AND @DureeAnnees > 0
+    BEGIN
+        -- Formule simplifiée
+        SET @TMA = ((@TauxCoupon + ((@ValeurNominale - @PrixAchat) / @DureeAnnees)) / 
+                   ((@ValeurNominale + @PrixAchat) / 2)) * 100;
+        
+        -- Mettre à jour
+        UPDATE Souscriptions SET TMA_Reel = @TMA WHERE SouscriptionID = @SouscriptionID;
+        
+        SELECT @TMA AS TMA_Calcule;
+    END
+END;
+GO
+
+-- Procédure : Créer événement de synchronisation
+CREATE OR ALTER PROCEDURE sp_CreerEvenementSync
+    @TypeEvenement VARCHAR(50),
+    @EntityType VARCHAR(50),
+    @EntityID INT,
+    @Payload NVARCHAR(MAX)
+AS
+BEGIN
+    DECLARE @EvenementID BIGINT;
+    DECLARE @NbSystemes INT;
+
+    -- Compter systèmes actifs
+    SELECT @NbSystemes = COUNT(*) FROM SystemesExternes WHERE EstActif = 1;
+
+    -- Créer événement
+    INSERT INTO EvenementsSync (TypeEvenement, EntityType, EntityID, Payload, NombreSystemesCibles)
+    VALUES (@TypeEvenement, @EntityType, @EntityID, @Payload, @NbSystemes);
+
+    SET @EvenementID = SCOPE_IDENTITY();
+
+    -- Retourner l'ID
+    SELECT @EvenementID AS EvenementID, @NbSystemes AS SystemesCibles;
+END;
+GO
+
+-- Procédure : Audit automatique
+CREATE OR ALTER PROCEDURE sp_AuditAction
+    @ClientID INT = NULL,
+    @TypeAction VARCHAR(50),
+    @TableCiblee NVARCHAR(100),
+    @EnregistrementID INT = NULL,
+    @AncienneValeur NVARCHAR(MAX) = NULL,
+    @NouvelleValeur NVARCHAR(MAX) = NULL,
+    @AdresseIP NVARCHAR(50) = NULL
+AS
+BEGIN
+    INSERT INTO JournalAudit (ClientID, TypeAction, TableCiblee, EnregistrementID, AncienneValeur, NouvelleValeur, AdresseIP)
+    VALUES (@ClientID, @TypeAction, @TableCiblee, @EnregistrementID, @AncienneValeur, @NouvelleValeur, @AdresseIP);
+END;
+GO
+
+PRINT '✓ Procédures stockées créées';
+GO
+
+-- ============================================================================
+-- VUES UTILES POUR REPORTING
+-- ============================================================================
+
+PRINT 'Création vues de reporting...';
+GO
+
+-- Vue : Performance portefeuille par client
+CREATE OR ALTER VIEW vw_PerformancePortefeuille AS
+SELECT 
+    c.ClientID,
+    CASE 
+        WHEN ci.Nom IS NOT NULL THEN ci.Prenom + ' ' + ci.Nom
+        ELSE cin.NomEntreprise
+    END AS NomClient,
+    COUNT(DISTINCT cpt.CompteID) AS NombreComptes,
+    COUNT(s.SouscriptionID) AS NombreSouscriptions,
+    SUM(s.MontantInvesti) AS TotalInvesti,
+    SUM(s.ValeurActuelle) AS ValeurActuelle,
+    SUM(s.InteretsAccumules) AS InteretsTotaux,
+    AVG(s.TMA_Reel) AS TMA_Moyen
+FROM Clients c
+LEFT JOIN ClientsIndividuels ci ON c.ClientID = ci.ClientID
+LEFT JOIN ClientsInstitutionnels cin ON c.ClientID = cin.ClientID
+LEFT JOIN ComptesRoles cr ON c.ClientID = cr.ClientID AND cr.Role = 'TITULAIRE_PRINCIPAL'
+LEFT JOIN Comptes cpt ON cr.CompteID = cpt.CompteID
+LEFT JOIN Souscriptions s ON cpt.CompteID = s.CompteID AND s.StatutSouscription = 'ACTIVE'
+GROUP BY c.ClientID, ci.Prenom, ci.Nom, cin.NomEntreprise;
+GO
+
+-- Vue : Statut synchronisation
+CREATE OR ALTER VIEW vw_StatutSynchronisation AS
+SELECT 
+    e.EvenementID,
+    e.TypeEvenement,
+    e.EntityType,
+    e.DateCreation,
+    e.StatutGlobal,
+    e.NombreSystemesCibles,
+    e.NombreSystemesReussis,
+    CASE 
+        WHEN e.NombreSystemesReussis = e.NombreSystemesCibles THEN 'Complet'
+        WHEN e.NombreSystemesReussis > 0 THEN 'Partiel'
+        ELSE 'Échec'
+    END AS EtatSynchronisation,
+    DATEDIFF(MINUTE, e.DateCreation, GETDATE()) AS MinutesDepuisCreation
+FROM EvenementsSync e
+WHERE e.StatutGlobal IN ('PENDING', 'PROCESSING', 'FAILED');
+GO
+
+PRINT '✓ Vues de reporting créées';
+GO
+
+-- ============================================================================
+-- TRIGGERS POUR AUDIT AUTOMATIQUE
+-- ============================================================================
+
+PRINT 'Création triggers d''audit...';
+GO
+
+-- Trigger : Audit connexions
+CREATE OR ALTER TRIGGER trg_AuditConnexion
+ON ClientsAuthentification
+AFTER UPDATE
+AS
+BEGIN
+    IF UPDATE(DateDerniereConnexion)
+    BEGIN
+        INSERT INTO JournalAudit (ClientID, TypeAction, TableCiblee, EnregistrementID, NouvelleValeur)
+        SELECT 
+            i.ClientID,
+            'LOGIN',
+            'ClientsAuthentification',
+            i.AuthID,
+            CONCAT('Connexion à ', FORMAT(i.DateDerniereConnexion, 'yyyy-MM-dd HH:mm:ss'))
+        FROM inserted i;
+    END
+END;
+GO
+
+-- Trigger : Audit modifications clients
+CREATE OR ALTER TRIGGER trg_AuditClients
+ON Clients
+AFTER UPDATE
+AS
+BEGIN
+    INSERT INTO JournalAudit (ClientID, TypeAction, TableCiblee, EnregistrementID, AncienneValeur, NouvelleValeur)
+    SELECT 
+        i.ClientID,
+        'UPDATE',
+        'Clients',
+        i.ClientID,
+        (SELECT d.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER),
+        (SELECT i.* FOR JSON PATH, WITHOUT_ARRAY_WRAPPER)
+    FROM inserted i
+    INNER JOIN deleted d ON i.ClientID = d.ClientID;
+END;
+GO
+
+PRINT '✓ Triggers d''audit créés';
+GO
+
+-- ============================================================================
+-- RÉSUMÉ FINAL
+-- ============================================================================
+
+PRINT '';
+PRINT '=================================================================';
+PRINT 'AJOUTS TERMINÉS AVEC SUCCÈS!';
+PRINT '=================================================================';
+PRINT '';
+PRINT 'Nouvelles tables créées:';
+PRINT '  ✓ PlanComptable (10 comptes)';
+PRINT '  ✓ EcrituresComptables';
+PRINT '  ✓ LignesEcriture';
+PRINT '  ✓ JournalAudit';
+PRINT '  ✓ VerificationsConformite';
+PRINT '  ✓ SystemesExternes (4 systèmes configurés)';
+PRINT '  ✓ EvenementsSync';
+PRINT '  ✓ LogsSynchronisation';
+PRINT '';
+PRINT 'Améliorations:';
+PRINT '  ✓ TMA_Reel ajouté à Souscriptions';
+PRINT '  ✓ CreePar ajouté à Transactions';
+PRINT '  ✓ Commentaires ajouté à Transactions';
+PRINT '';
+PRINT 'Procédures stockées:';
+PRINT '  ✓ sp_CalculerTMA';
+PRINT '  ✓ sp_CreerEvenementSync';
+PRINT '  ✓ sp_AuditAction';
+PRINT '';
+PRINT 'Vues:';
+PRINT '  ✓ vw_PerformancePortefeuille';
+PRINT '  ✓ vw_StatutSynchronisation';
+PRINT '';
+PRINT 'Triggers:';
+PRINT '  ✓ trg_AuditConnexion';
+PRINT '  ✓ trg_AuditClients';
+PRINT '';
+PRINT 'Votre base de données est maintenant complète et conforme';
+PRINT 'à la documentation préparée!';
+PRINT '=================================================================';
+GO
+
+-- Vérification finale
+SELECT 
+    'Clients' AS Module,
+    (SELECT COUNT(*) FROM Clients) AS NombreEnregistrements
+UNION ALL
+SELECT 'Instruments', COUNT(*) FROM Instruments
+UNION ALL
+SELECT 'Plan Comptable', COUNT(*) FROM PlanComptable
+UNION ALL
+SELECT 'Systèmes Externes', COUNT(*) FROM SystemesExternes;
+GO

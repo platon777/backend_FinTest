@@ -1,11 +1,13 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, users, comptes, instruments, souscriptions, transactions
+from app.api.v1.endpoints import auth, users, comptes, instruments, souscriptions, transactions, dashboard, profil
 
 api_router = APIRouter()
 
 # Include routers
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
+api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
+api_router.include_router(profil.router, prefix="/profil", tags=["Profil"])
 api_router.include_router(comptes.router, prefix="/comptes", tags=["Comptes"])
 api_router.include_router(instruments.router, prefix="/instruments", tags=["Instruments"])
 api_router.include_router(souscriptions.router, prefix="/souscriptions", tags=["Souscriptions"])
