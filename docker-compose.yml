@@ -1,0 +1,65 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: profin-postgres
+    environment:
+      POSTGRES_DB: profin_core
+      POSTGRES_USER: profin
+      POSTGRES_PASSWORD: profin_dev
+    ports:
+      - "55431:5432"
+    volumes:
+      - profin_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U profin -d profin_core"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: profin-api
+    environment:
+      DATABASE_URL: postgresql+psycopg2://profin:profin_dev@db:5432/profin_core
+      SECRET_KEY: change-this-prototype-secret-before-production
+      APP_ENV: development
+      DEBUG: "false"
+      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../FinTest2
+      dockerfile: Dockerfile
+    container_name: profin-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_started
+
+  db-test:
+    image: postgres:16-alpine
+    container_name: profin-postgres-test
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: profin_test
+      POSTGRES_USER: profin
+      POSTGRES_PASSWORD: profin_dev
+    ports:
+      - "55432:5432"
+    volumes:
+      - profin_pgtestdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U profin -d profin_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  profin_pgdata:
+  profin_pgtestdata:

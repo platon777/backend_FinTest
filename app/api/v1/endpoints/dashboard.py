@@ -1,193 +1,69 @@
-"""
-Endpoints Dashboard - Vue d'ensemble du portefeuille client
-"""
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from app.db.database import get_db
+
+from app.api.v1.endpoints.serializers import account_dict, subscription_dict, transaction_dict
 from app.core.dependencies import get_current_active_client
-from app.models.models import Client
-from app.schemas.dashboard import (
-    DashboardOverviewResponse,
-    TransactionsRecentesResponse,
-    InvestissementsActifsResponse,
-    StatistiquesMensuellesResponse,
-    DashboardComplet
-)
-from app.services.dashboard_service import DashboardService
-from typing import Optional
+from app.db.database import get_db
+from app.models.models import Account, AccountRole, Client, Subscription, Transaction
 
 router = APIRouter()
 
 
-@router.get("/overview", response_model=DashboardOverviewResponse)
-def get_dashboard_overview(
-    compte_id: Optional[int] = Query(None, description="ID du compte spécifique (optionnel)"),
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """
-    Vue d'ensemble du portefeuille
-
-    Retourne la valeur totale, le rendement, le nombre de souscriptions actives
-    pour tous les comptes du client ou un compte spécifique.
-
-    **Corresponds à l'écran Dashboard principal avec:**
-    - Valeur totale: 50 000,00 $US
-    - Rendement total: +2 600,00 $US (5.2%)
-    - Souscriptions actives: 2
-    """
-    try:
-        overview = DashboardService.get_overview(
-            db=db,
-            client_id=current_client.ClientID,
-            compte_id=compte_id
-        )
-        return DashboardOverviewResponse(**overview)
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors de la récupération du dashboard: {str(e)}"
-        )
+def client_accounts(db: Session, client_id: int) -> list[Account]:
+    return list(db.scalars(select(Account).join(AccountRole, AccountRole.account_id == Account.id).where(AccountRole.client_id == client_id, AccountRole.is_active.is_(True))).unique())
 
 
-@router.get("/transactions/recentes", response_model=TransactionsRecentesResponse)
-def get_transactions_recentes(
-    compte_id: Optional[int] = Query(None, description="ID du compte spécifique (optionnel)"),
-    limit: int = Query(3, ge=1, le=10, description="Nombre de transactions à retourner"),
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """
-    Dernières transactions
-
-    Retourne les N dernières transactions du client.
-
-    **Corresponds à la section "Dernières transactions" du dashboard:**
-    - Virement entrant salaire: 5000,00 $US
-    - Souscription OBL-BRH-2025-001: -20000,00 $US
-    - Retrait en ligne: -1000,00 $US (En Attente Validation)
-    """
-    try:
-        transactions = DashboardService.get_transactions_recentes(
-            db=db,
-            client_id=current_client.ClientID,
-            compte_id=compte_id,
-            limit=limit
-        )
-
-        return TransactionsRecentesResponse(
-            total=len(transactions),
-            transactions=transactions
-        )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors de la récupération des transactions: {str(e)}"
-        )
+@router.get("/overview")
+def overview(client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    accounts = client_accounts(db, client.id)
+    subscriptions = list(db.scalars(select(Subscription).where(Subscription.account_id.in_([item.id for item in accounts]), Subscription.status == "ACTIVE")))
+    total_invested = sum((Decimal(item.invested_amount) for item in subscriptions), Decimal("0"))
+    total_value = sum((Decimal(item.current_value) for item in subscriptions), Decimal("0"))
+    total_return = total_value - total_invested
+    percentage = (total_return / total_invested * 100) if total_invested else Decimal("0")
+    currency = accounts[0].currency if accounts else "USD"
+    return {
+        "total_value": total_value, "total_invested": total_invested, "total_return": total_return,
+        "return_percentage": percentage.quantize(Decimal("0.01")), "active_subscriptions": len(subscriptions),
+        "accounts": [account_dict(item, db.scalar(select(AccountRole.role).where(AccountRole.account_id == item.id, AccountRole.client_id == client.id, AccountRole.is_active.is_(True)))) for item in accounts],
+        "currency": currency,
+        "valeur_totale": total_value, "rendement_total": total_return, "pourcentage_rendement": percentage.quantize(Decimal("0.01")),
+    }
 
 
-@router.get("/investissements", response_model=InvestissementsActifsResponse)
-def get_investissements_actifs(
-    compte_id: Optional[int] = Query(None, description="ID du compte spécifique (optionnel)"),
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """
-    Investissements actifs (aperçu)
-
-    Retourne la liste des investissements actifs avec progression vers maturité.
-
-    **Corresponds à la section "Investissements Actifs" du dashboard:**
-    - Obligation BRH 5.5% 2025
-    - Montant: 20 000,00 $US
-    - Maturité: 14/06/2025
-    - Progression: 75%
-    """
-    try:
-        investissements = DashboardService.get_investissements_actifs(
-            db=db,
-            client_id=current_client.ClientID,
-            compte_id=compte_id
-        )
-
-        return InvestissementsActifsResponse(
-            total=len(investissements),
-            investissements=investissements
-        )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors de la récupération des investissements: {str(e)}"
-        )
+@router.get("/transactions/recentes")
+def recent_transactions(limit: int = Query(default=5, ge=1, le=20), client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    account_ids = select(AccountRole.account_id).where(AccountRole.client_id == client.id, AccountRole.is_active.is_(True))
+    rows = db.scalars(select(Transaction).where((Transaction.source_account_id.in_(account_ids)) | (Transaction.destination_account_id.in_(account_ids))).order_by(Transaction.created_at.desc()).limit(limit)).all()
+    result = [transaction_dict(item, db) for item in rows]
+    return {"total": len(result), "transactions": result}
 
 
-@router.get("/statistiques/mensuelles", response_model=StatistiquesMensuellesResponse)
-def get_statistiques_mensuelles(
-    compte_id: Optional[int] = Query(None, description="ID du compte spécifique (optionnel)"),
-    mois: int = Query(12, ge=1, le=24, description="Nombre de mois"),
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """
-    Statistiques mensuelles pour le graphique
-
-    Retourne la valeur du portefeuille pour les N derniers mois.
-
-    **Corresponds au graphique à barres du dashboard:**
-    - Janvier: 45 000,00 $US
-    - Février: 45 300,00 $US
-    - Mars: 46 200,00 $US
-    - Avril: 47 800,00 $US
-    - Mai: 49 100,00 $US
-    - Juin: 50 500,00 $US
-    """
-    try:
-        statistiques = DashboardService.get_statistiques_mensuelles(
-            db=db,
-            client_id=current_client.ClientID,
-            compte_id=compte_id,
-            mois=mois
-        )
-
-        return StatistiquesMensuellesResponse(periodes=statistiques)
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors de la récupération des statistiques: {str(e)}"
-        )
+@router.get("/investissements")
+def active_investments(client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    account_ids = select(AccountRole.account_id).where(AccountRole.client_id == client.id, AccountRole.is_active.is_(True))
+    rows = db.scalars(select(Subscription).where(Subscription.account_id.in_(account_ids), Subscription.status == "ACTIVE").order_by(Subscription.effective_maturity_date)).all()
+    result = [subscription_dict(item) for item in rows]
+    return {"total": len(result), "investissements": result, "investments": result}
 
 
-@router.get("/complet", response_model=DashboardComplet)
-def get_dashboard_complet(
-    compte_id: Optional[int] = Query(None, description="ID du compte spécifique (optionnel)"),
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """
-    Dashboard complet - Toutes les sections en un seul appel
+@router.get("/statistiques/mensuelles")
+def monthly_statistics(mois: int = Query(default=6, ge=1, le=24), client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    accounts = client_accounts(db, client.id)
+    subscriptions = list(db.scalars(select(Subscription).where(Subscription.account_id.in_([item.id for item in accounts])))) if accounts else []
+    value = sum((Decimal(item.current_value) for item in subscriptions), Decimal("0"))
+    result = [{"mois": index + 1, "valeur_portefeuille": value, "nombre_souscriptions": len(subscriptions)} for index in range(mois)]
+    return {"periodes": result}
 
-    Optimisé pour charger tout le dashboard d'un coup.
-    Retourne:
-    - Vue d'ensemble (overview)
-    - Dernières transactions (3)
-    - Investissements actifs
-    - Statistiques mensuelles (12 mois)
-    """
-    try:
-        dashboard = DashboardService.get_dashboard_complet(
-            db=db,
-            client_id=current_client.ClientID,
-            compte_id=compte_id
-        )
 
-        return DashboardComplet(**dashboard)
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors de la récupération du dashboard complet: {str(e)}"
-        )
+@router.get("/complet")
+def complete_dashboard(client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    return {
+        "overview": overview(client, db),
+        "transactions_recentes": recent_transactions(5, client, db),
+        "investissements_actifs": active_investments(client, db),
+        "statistiques_mensuelles": monthly_statistics(6, client, db),
+    }

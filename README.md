@@ -1,371 +1,77 @@
-# Système de Gestion de Portefeuille - Version Finale
+# ProFin Core Investment Platform — backend prototype
 
-## 🎯 Vue d'ensemble
+Backend FastAPI du prototype demandé pour le système d'information miniature d'une banque d'investissement.
 
-Un système où les **CLIENTS** peuvent:
-- S'inscrire et créer leur compte
-- Se connecter au portail web
-- Voir leurs comptes d'investissement
-- Consulter leurs obligations/actions achetées
-- Suivre leurs transactions
+## Choix d'architecture
 
-**Il n'y a QUE des clients. Pas d'employés/back-office.**
+Le backend est un monolithe modulaire : une seule API et une seule base relationnelle PostgreSQL portent la vérité financière. Les domaines sont séparés dans le code : authentification/KYC, comptes et rôles, instruments, souscriptions, transactions, écritures comptables, audit et dashboard.
 
-## 🏗️ Architecture Simple
+Redis, VPN, point d'entrée public, IA, connecteurs CRM/comptabilité et workers asynchrones sont volontairement hors du prototype exécutable. Les contrats et le modèle de données gardent toutefois les points d'extension nécessaires.
 
-```
-┌──────────────────────────────────┐
-│     PORTAIL WEB (React)          │
-│     Interface Client             │
-│                                  │
-│  - Inscription                   │
-│  - Connexion                     │
-│  - Mes comptes                   │
-│  - Mes investissements           │
-│  - Mes transactions              │
-└─────────────┬────────────────────┘
-              │
-              │ REST API
-              ↓
-┌─────────────┴────────────────────┐
-│     BACKEND (FastAPI)            │
-│                                  │
-│  Endpoints:                      │
-│  /auth/register                  │
-│  /auth/login                     │
-│  /users/me                       │
-│  /comptes                        │
-│  /souscriptions                  │
-└─────────────┬────────────────────┘
-              │
-              │ SQL
-              ↓
-┌─────────────┴────────────────────┐
-│  SQL Server Azure (Db_test)      │
-│                                  │
-│  Tables:                         │
-│  - Clients                       │
-│  - ClientsAuthentification       │
-│  - Comptes                       │
-│  - Instruments                   │
-│  - Souscriptions                 │
-│  - Transactions                  │
-└──────────────────────────────────┘
-```
-
-## 📊 Structure de la base de données
-
-### Les clients sont les utilisateurs du système
-
-```
-Client (Utilisateur)
-    ↓
-ClientsAuthentification (Login)
-    ↓
-Comptes (Comptes d'investissement)
-    ↓
-Souscriptions (Achats d'obligations/actions)
-    ↓
-Transactions (Historique)
-```
-
-### Tables principales
-
-**1. Clients**
-- Un client peut être INDIVIDUEL ou INSTITUTIONNEL
-- Chaque client a un profil de risque
-- Statut: ACTIF, SUSPENDU, FERME
-
-**2. ClientsAuthentification**
-- Email + Password pour login
-- Un client = un compte de connexion
-- Sessions gérées avec JWT tokens
-
-**3. Comptes**
-- Chaque client peut avoir plusieurs comptes
-- Types: INVESTISSEMENT, CASH, EPARGNE
-- Devise: HTG, USD, EUR
-
-**4. Instruments**
-- Obligations (OBL)
-- Actions (ACTION)
-- Fonds communs (FONDS)
-- Dépôts à terme (DEPOT)
-
-**5. Souscriptions**
-- Quand un client achète un instrument
-- Suivi du montant investi, intérêts accumulés
-- Valeur actuelle
-
-**6. Transactions**
-- DEPOT, RETRAIT, SOUSCRIPTION, RACHAT
-- Historique de toutes les opérations
-
-## 🚀 Installation
-
-### 1. Créer la base de données
-
-Exécutez le script SQL:
-```sql
--- Fichier: sql_scripts/DATABASE_CLIENTS_ONLY.sql
-```
-
-Ce script crée:
-- ✅ Toutes les tables nécessaires
-- ✅ Quelques instruments de test (obligations BRH, EDH)
-- ✅ Indexes pour la performance
-
-### 2. Lancer l'API
+## Démarrage Docker
 
 ```bash
-# Activer l'environnement virtuel
-venv\Scripts\activate
-
-# Lancer FastAPI
-python main.py
+docker compose up --build
 ```
 
-API: http://localhost:8000
-Docs: http://localhost:8000/api/v1/docs
+La base de développement est exposée sur `localhost:55431` (le port interne reste `5432`). Le port `55432` est réservé à la base PostgreSQL de tests.
 
-## 📝 Exemples d'utilisation
+La commande lance PostgreSQL, applique la migration Alembic, charge le seed idempotent, démarre l'API et construit le frontend ProFin Core Console sur `http://localhost:3000`.
 
-### 1. Inscription d'un client individuel
+- API : http://localhost:8000
+- Swagger : http://localhost:8000/api/v1/docs
+- Health : http://localhost:8000/health
 
-```http
-POST /api/v1/auth/register
-Content-Type: application/json
+Le volume `profin_pgdata` conserve les données. Pour repartir de zéro en environnement de démonstration :
 
-{
-  "client_type": "INDIVIDUEL",
-  "email": "marie.jean@example.com",
-  "password": "MotDePasse123",
-  "prenom": "Marie",
-  "nom": "Jean",
-  "date_naissance": "1990-03-20",
-  "numero_piece_identite": "CIN12345"
-}
+```bash
+docker compose down -v
+docker compose up --build
 ```
 
-**Réponse:**
-```json
-{
-  "success": true,
-  "message": "Inscription réussie",
-  "client_id": 1,
-  "email": "marie.jean@example.com"
-}
+## Fonctionnalités métier
+
+- clients individuels et institutionnels avec KYC;
+- comptes multi-devises et rôles `TITULAIRE_PRINCIPAL`, `TITULAIRE_SECONDAIRE`, `MANDATAIRE`, `OBSERVATEUR`;
+- catalogue d'instruments, obligations et fonds;
+- souscriptions avec contrôle de devise, minimum, solde, position et rendement;
+- dépôts, retraits et transferts en workflow `PENDING_APPROVAL -> APPROVED -> EXECUTED`;
+- maker/checker : le créateur d'une transaction ne peut pas la valider lui-même;
+- écritures comptables équilibrées générées à l'exécution;
+- audit métier pour les créations, validations et exécutions;
+- dashboard portefeuille et historique filtrés par les comptes autorisés.
+
+## Authentification
+
+`POST /api/v1/auth/login` émet un JWT d'accès valable 30 minutes et un refresh token opaque valable 7 jours. Seul le hash SHA-256 du refresh token est conservé en base; chaque rafraîchissement révoque l'ancien token et en émet un nouveau. Le JWT ne contient que `client_id`, le type et l'expiration. Les permissions sont relues en base à chaque accès métier.
+
+## Endpoints principaux
+
+| Domaine | Routes |
+|---|---|
+| Auth | `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout` |
+| KYC | `/users/me`, `/profil` |
+| Comptes | `/comptes/mes-comptes`, `/comptes/{id}` |
+| Instruments | `/instruments`, `/instruments/{id}` |
+| Investissements | `/souscriptions/mes-souscriptions`, `POST /souscriptions/`, `/souscriptions/{id}/racheter` |
+| Transactions | `POST /transactions/`, `/transactions/{id}/approve`, `/transactions/mes-transactions` |
+| Dashboard | `/dashboard/overview`, `/dashboard/complet`, `/dashboard/investissements` |
+
+## Tests PostgreSQL
+
+Les tests n'utilisent pas SQLite. Ils se connectent à PostgreSQL sur le service Docker `db-test` et créent un schéma isolé temporaire par test :
+
+```bash
+docker compose --profile test up -d db-test
+set TEST_DATABASE_URL=postgresql+psycopg2://profin:profin_dev@127.0.0.1:55432/profin_test
+python -m pytest -q tests
 ```
 
-### 2. Connexion
+La fixture réinitialise la base de test PostgreSQL dédiée entre les scénarios; aucune donnée de démonstration ou de production n'est utilisée par les tests.
 
-```http
-POST /api/v1/auth/login
-Content-Type: application/json
+La base de production/démonstration reste PostgreSQL et est créée par `alembic upgrade head`.
 
-{
-  "email": "marie.jean@example.com",
-  "password": "MotDePasse123"
-}
-```
+## Documents utiles
 
-**Réponse:**
-```json
-{
-  "success": true,
-  "tokens": {
-    "access_token": "eyJhbGci...",
-    "refresh_token": "eyJhbGci...",
-    "expires_in": 1800
-  },
-  "client": {
-    "client_id": 1,
-    "email": "marie.jean@example.com",
-    "client_type": "INDIVIDUEL",
-    "prenom": "Marie",
-    "nom": "Jean"
-  }
-}
-```
-
-### 3. Voir mon profil (route protégée)
-
-```http
-GET /api/v1/users/me
-Authorization: Bearer eyJhbGci...
-```
-
-**Réponse:**
-```json
-{
-  "client_id": 1,
-  "email": "marie.jean@example.com",
-  "client_type": "INDIVIDUEL",
-  "prenom": "Marie",
-  "nom": "Jean",
-  "statut_client": "ACTIF",
-  "date_naissance": "1990-03-20"
-}
-```
-
-## 🔐 Sécurité
-
-- **Passwords**: Hashés avec bcrypt
-- **JWT Tokens**:
-  - Access token: 30 minutes
-  - Refresh token: 7 jours
-- **Sessions**: Stockées dans RefreshTokens (révocables)
-- **HTTPS**: Obligatoire en production
-
-## 📱 Intégration React
-
-### Service d'authentification
-
-```javascript
-// src/services/authService.js
-import axios from 'axios';
-
-const API_URL = 'http://localhost:8000/api/v1';
-
-export const authService = {
-  async register(data) {
-    const response = await axios.post(`${API_URL}/auth/register`, data);
-    return response.data;
-  },
-
-  async login(email, password) {
-    const response = await axios.post(`${API_URL}/auth/login`, {
-      email,
-      password
-    });
-
-    if (response.data.success) {
-      localStorage.setItem('access_token', response.data.tokens.access_token);
-      localStorage.setItem('refresh_token', response.data.tokens.refresh_token);
-      localStorage.setItem('user', JSON.stringify(response.data.client));
-    }
-
-    return response.data;
-  },
-
-  async getProfile() {
-    const token = localStorage.getItem('access_token');
-    const response = await axios.get(`${API_URL}/users/me`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    return response.data;
-  },
-
-  logout() {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    localStorage.removeItem('user');
-  },
-
-  isLoggedIn() {
-    return !!localStorage.getItem('access_token');
-  }
-};
-```
-
-### Composant Login
-
-```javascript
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { authService } from '../services/authService';
-
-function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const navigate = useNavigate();
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    try {
-      await authService.login(email, password);
-      navigate('/dashboard');
-    } catch (error) {
-      alert('Erreur de connexion');
-    }
-  };
-
-  return (
-    <form onSubmit={handleLogin}>
-      <input
-        type="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        placeholder="Email"
-      />
-      <input
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        placeholder="Mot de passe"
-      />
-      <button type="submit">Se connecter</button>
-    </form>
-  );
-}
-```
-
-## 🗂️ Structure des fichiers
-
-```
-backend_FinTest/
-├── app/
-│   ├── api/v1/endpoints/
-│   │   ├── auth.py          # Inscription, login
-│   │   ├── users.py         # Profil client
-│   │   └── health.py        # Health check
-│   ├── core/
-│   │   ├── config.py        # Configuration
-│   │   ├── security.py      # JWT, bcrypt
-│   │   └── dependencies.py  # get_current_client
-│   ├── db/
-│   │   └── database.py      # Connexion SQL Server
-│   ├── models/
-│   │   └── all_models.py    # Modèles SQLAlchemy
-│   ├── schemas/
-│   │   └── auth_schemas.py  # Schémas Pydantic
-│   └── services/
-│       └── auth_service.py  # Logique métier
-├── sql_scripts/
-│   └── DATABASE_CLIENTS_ONLY.sql  # Script SQL
-├── main.py                  # Point d'entrée
-├── requirements.txt
-└── README_FINAL.md         # Ce fichier
-```
-
-## ✅ Ce qui fonctionne
-
-- [x] Inscription clients (INDIVIDUEL et INSTITUTIONNEL)
-- [x] Connexion avec JWT
-- [x] Profil client
-- [x] Sessions avec refresh tokens
-- [x] Routes protégées
-- [x] Connexion SQL Server Azure
-
-## 🔜 À implémenter ensuite
-
-- [ ] Endpoint pour lister les comptes d'un client
-- [ ] Endpoint pour lister les souscriptions
-- [ ] Endpoint pour lister les instruments disponibles
-- [ ] Endpoint pour souscrire à un instrument
-- [ ] Endpoint pour l'historique des transactions
-- [ ] Dashboard avec statistiques
-
-## 💡 Notes importantes
-
-**Les clients sont les utilisateurs:**
-- Il n'y a pas de table "Utilisateurs" séparée
-- Les clients se connectent directement
-- Chaque client a ses propres comptes et investissements
-
-**La table Clients remplace Utilisateurs:**
-- `Clients` = Les personnes qui utilisent le système
-- `ClientsAuthentification` = Comment ils se connectent
-- `Comptes` = Leurs comptes d'investissement
-
-C'est simple et direct! 🚀
+- [Comptes de démonstration](DEMO_CREDENTIALS.md)
+- [Note de refonte backend](BACKEND_REFACTOR.md)

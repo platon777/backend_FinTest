@@ -1,110 +1,53 @@
-"""
-Endpoints Profil - Gestion du profil client (KYC)
-"""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.db.database import get_db
+
 from app.core.dependencies import get_current_active_client
-from app.models.models import Client
-from app.schemas.profil import (
-    ProfilClientResponse,
-    ProfilUpdateRequest,
-    ProfilUpdateResponse
-)
-from app.services.profil_service import ProfilService
+from app.db.database import get_db
+from app.models.models import Client, ClientAddress, ClientContact
+from app.schemas.api import ProfileUpdate
 
 router = APIRouter()
 
 
-@router.get("/", response_model=ProfilClientResponse)
-def get_profil(
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """
-    Récupérer le profil complet du client connecté
-
-    **Corresponds à l'écran "Profil KYC" avec:**
-
-    **Informations personnelles:**
-    - Nom complet: Jean Dupont
-    - Type de client: Individuel
-    - Adresse email: jean.dupont@email.com
-    - Numéro de téléphone: +33 6 12 34 56 78
-    - Adresse: 123 Rue de la République, 75001 Paris, France
-
-    **Profil investisseur:**
-    - Statut: Personne physique
-    - Niveau de risque accepté: Modéré
-    - Horizon d'investissement: Moyen terme
-    - Revenu annuel: 50k-75k USD
-    """
-    try:
-        profil = ProfilService.get_profil_client(
-            db=db,
-            client_id=current_client.ClientID
-        )
-        return ProfilClientResponse(**profil)
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors de la récupération du profil: {str(e)}"
-        )
+def profile_dict(client: Client) -> dict:
+    individual = client.individual_profile
+    institutional = client.institutional_profile
+    address = next((item for item in client.addresses if item.is_primary), client.addresses[0] if client.addresses else None)
+    phone = next((item.value for item in client.contacts if item.contact_type == "TELEPHONE" and item.is_primary), None)
+    return {
+        "client_id": client.id, "client_type": client.client_type, "email": client.auth.email,
+        "status": client.status, "risk_profile": client.risk_profile,
+        "full_name": f"{individual.first_name} {individual.last_name}" if individual else institutional.company_name,
+        "phone": phone,
+        "address": {"line1": address.line1, "city": address.city, "postal_code": address.postal_code, "country": address.country} if address else None,
+        "individual": {"first_name": individual.first_name, "last_name": individual.last_name, "birth_date": individual.birth_date, "nationality": individual.nationality, "identity_type": individual.identity_type, "identity_number": individual.identity_number, "profession": individual.profession, "income_source": individual.income_source, "estimated_annual_income": individual.estimated_annual_income} if individual else None,
+        "institutional": {"company_name": institutional.company_name, "registration_number": institutional.registration_number, "legal_form": institutional.legal_form, "sector": institutional.sector, "annual_revenue": institutional.annual_revenue, "legal_representative": institutional.legal_representative} if institutional else None,
+    }
 
 
-@router.patch("/", response_model=ProfilUpdateResponse)
-def update_profil(
-    data: ProfilUpdateRequest,
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """
-    Mettre à jour le profil du client
+@router.get("")
+def get_profile(client: Client = Depends(get_current_active_client)):
+    return profile_dict(client)
 
-    Permet de mettre à jour:
-    - Téléphone
-    - Adresse (ligne1, ligne2, ville, code postal, pays)
-    - Profession (pour les clients individuels)
-    - Source de revenus (pour les clients individuels)
-    """
-    try:
-        success = ProfilService.update_profil(
-            db=db,
-            client_id=current_client.ClientID,
-            telephone=data.telephone,
-            adresse_ligne1=data.adresse_ligne1,
-            adresse_ligne2=data.adresse_ligne2,
-            ville=data.ville,
-            code_postal=data.code_postal,
-            pays=data.pays,
-            profession=data.profession,
-            source_revenus=data.source_revenus
-        )
 
-        if success:
-            return ProfilUpdateResponse(
-                success=True,
-                message="Profil mis à jour avec succès"
-            )
+@router.patch("")
+def update_profile(payload: ProfileUpdate, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    address = next((item for item in client.addresses if item.is_primary), None)
+    if payload.adresse_ligne1 or payload.ville or payload.code_postal:
+        if not address:
+            address = ClientAddress(client_id=client.id, line1=payload.adresse_ligne1 or "", city=payload.ville or "Port-au-Prince", postal_code=payload.code_postal, country="Haïti", is_primary=True)
+            db.add(address)
         else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Erreur lors de la mise à jour du profil"
-            )
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors de la mise à jour du profil: {str(e)}"
-        )
+            if payload.adresse_ligne1 is not None: address.line1 = payload.adresse_ligne1
+            if payload.ville is not None: address.city = payload.ville
+            if payload.code_postal is not None: address.postal_code = payload.code_postal
+    if payload.telephone:
+        contact = next((item for item in client.contacts if item.contact_type == "TELEPHONE" and item.is_primary), None)
+        if not contact:
+            db.add(ClientContact(client_id=client.id, contact_type="TELEPHONE", value=payload.telephone, is_primary=True))
+        else:
+            contact.value = payload.telephone
+    db.commit()
+    db.refresh(client)
+    return profile_dict(client)

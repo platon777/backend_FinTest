@@ -1,55 +1,49 @@
-from datetime import datetime, timedelta
-from typing import Optional
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+
 from app.core.config import settings
 
-# Password hashing context
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against a hashed password."""
-    # Bcrypt has a 72 bytes limit, truncate safely
-    if isinstance(plain_password, str):
-        plain_password = plain_password[:72]
-    return pwd_context.verify(plain_password, hashed_password)
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password[:72])
 
 
-def get_password_hash(password: str) -> str:
-    """Hash a password."""
-    # Bcrypt has a 72 bytes limit, truncate safely
-    if isinstance(password, str):
-        password = password[:72]
-    return pwd_context.hash(password)
+def verify_password(password: str, password_hash: str) -> bool:
+    return pwd_context.verify(password[:72], password_hash)
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Create a JWT access token."""
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-
-    to_encode.update({"exp": expire, "type": "access"})
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return encoded_jwt
+def create_access_token(client_id: int) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(client_id),
+        "type": "access",
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def create_refresh_token(data: dict) -> str:
-    """Create a JWT refresh token."""
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire, "type": "refresh"})
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return encoded_jwt
-
-
-def decode_token(token: str) -> Optional[dict]:
-    """Decode a JWT token."""
+def decode_access_token(token: str) -> dict[str, Any] | None:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != "access" or not payload.get("sub"):
+            return None
         return payload
     except JWTError:
         return None
+
+
+def create_refresh_token() -> str:
+    return secrets.token_urlsafe(48)
+
+
+def hash_refresh_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

@@ -1,260 +1,271 @@
+"""Modèle relationnel du Core Investment Platform ProFin.
+
+Les noms SQL sont en snake_case pour rester portables entre PostgreSQL, SQLite
+(tests) et les futurs outils de reporting.
 """
-Modèles SQLAlchemy - Version simplifiée (CLIENTS UNIQUEMENT)
-Les CLIENTS sont les utilisateurs du système
-"""
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Numeric, Date, ForeignKey, Text
-from sqlalchemy.orm import relationship
+
+from datetime import date, datetime
+from decimal import Decimal
+
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+
 from app.db.database import Base
 
 
-# ============================================================================
-# CLIENTS
-# ============================================================================
-
 class Client(Base):
-    __tablename__ = "Clients"
+    __tablename__ = "clients"
 
-    ClientID = Column(Integer, primary_key=True, autoincrement=True)
-    ClientType = Column(String(20), nullable=False)
-    ProfilRisque = Column(String(20))
-    StatutClient = Column(String(20), default='ACTIF')
-    DateCreation = Column(DateTime, server_default=func.getdate())
-    DerniereMiseAJour = Column(DateTime, server_default=func.getdate())
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    risk_profile: Mapped[str] = mapped_column(String(20), default="MODERE", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIF", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    # Relationships
-    auth = relationship("ClientAuthentification", back_populates="client", uselist=False)
-    individuel = relationship("ClientIndividuel", back_populates="client", uselist=False)
-    institutionnel = relationship("ClientInstitutionnel", back_populates="client", uselist=False)
-    adresses = relationship("AdresseClient", back_populates="client")
-    contacts = relationship("ContactClient", back_populates="client")
-    comptes_roles = relationship("CompteRole", back_populates="client")
-    refresh_tokens = relationship("RefreshToken", back_populates="client")
-
-
-class ClientIndividuel(Base):
-    __tablename__ = "ClientsIndividuels"
-
-    ClientID = Column(Integer, ForeignKey('Clients.ClientID'), primary_key=True)
-    Prenom = Column(String(100), nullable=False)
-    Nom = Column(String(100), nullable=False)
-    DateNaissance = Column(Date, nullable=False)
-    LieuNaissance = Column(String(200))
-    Nationalite = Column(String(50))
-    TypePieceIdentite = Column(String(50))
-    NumeroPieceIdentite = Column(String(100), unique=True, nullable=False)
-    DateExpirationPiece = Column(Date)
-    SituationMatrimoniale = Column(String(20))
-    Profession = Column(String(200))
-    SourceRevenus = Column(String(500))
-    RevenuAnnuelEstime = Column(Numeric(18, 2))
-
-    client = relationship("Client", back_populates="individuel")
+    auth: Mapped["ClientAuthentication"] = relationship(back_populates="client", uselist=False, cascade="all, delete-orphan")
+    individual_profile: Mapped["IndividualProfile | None"] = relationship(back_populates="client", uselist=False, cascade="all, delete-orphan")
+    institutional_profile: Mapped["InstitutionalProfile | None"] = relationship(back_populates="client", uselist=False, cascade="all, delete-orphan")
+    addresses: Mapped[list["ClientAddress"]] = relationship(back_populates="client", cascade="all, delete-orphan")
+    contacts: Mapped[list["ClientContact"]] = relationship(back_populates="client", cascade="all, delete-orphan")
+    account_roles: Mapped[list["AccountRole"]] = relationship(back_populates="client", cascade="all, delete-orphan")
+    created_transactions: Mapped[list["Transaction"]] = relationship(foreign_keys="Transaction.created_by_client_id", back_populates="maker")
+    approved_transactions: Mapped[list["Transaction"]] = relationship(foreign_keys="Transaction.approved_by_client_id", back_populates="checker")
+    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(back_populates="client", cascade="all, delete-orphan")
 
 
-class ClientInstitutionnel(Base):
-    __tablename__ = "ClientsInstitutionnels"
+class IndividualProfile(Base):
+    __tablename__ = "individual_profiles"
 
-    ClientID = Column(Integer, ForeignKey('Clients.ClientID'), primary_key=True)
-    NomEntreprise = Column(String(200), nullable=False)
-    NumeroRegistreCommerce = Column(String(100), unique=True, nullable=False)
-    FormeJuridique = Column(String(50))
-    Secteur = Column(String(200))
-    DateCreationEntreprise = Column(Date)
-    ChiffreAffairesAnnuel = Column(Numeric(18, 2))
-    NomRepresentantLegal = Column(String(200))
-    FonctionRepresentant = Column(String(100))
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), primary_key=True)
+    first_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    last_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    birth_date: Mapped[date] = mapped_column(Date, nullable=False)
+    nationality: Mapped[str | None] = mapped_column(String(80))
+    identity_type: Mapped[str | None] = mapped_column(String(50))
+    identity_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    profession: Mapped[str | None] = mapped_column(String(200))
+    income_source: Mapped[str | None] = mapped_column(String(500))
+    estimated_annual_income: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
 
-    client = relationship("Client", back_populates="institutionnel")
-
-
-class AdresseClient(Base):
-    __tablename__ = "AdressesClients"
-
-    AdresseID = Column(Integer, primary_key=True, autoincrement=True)
-    ClientID = Column(Integer, ForeignKey('Clients.ClientID'), nullable=False)
-    TypeAdresse = Column(String(20))
-    AdresseLigne1 = Column(String(200))
-    AdresseLigne2 = Column(String(200))
-    Ville = Column(String(100))
-    CodePostal = Column(String(20))
-    Pays = Column(String(100))
-    EstPrincipale = Column(Boolean, default=False)
-
-    client = relationship("Client", back_populates="adresses")
+    client: Mapped[Client] = relationship(back_populates="individual_profile")
 
 
-class ContactClient(Base):
-    __tablename__ = "ContactsClients"
+class InstitutionalProfile(Base):
+    __tablename__ = "institutional_profiles"
 
-    ContactID = Column(Integer, primary_key=True, autoincrement=True)
-    ClientID = Column(Integer, ForeignKey('Clients.ClientID'), nullable=False)
-    TypeContact = Column(String(20))
-    Valeur = Column(String(200), nullable=False)
-    EstPrincipal = Column(Boolean, default=False)
-    EstVerifie = Column(Boolean, default=False)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), primary_key=True)
+    company_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    registration_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    legal_form: Mapped[str | None] = mapped_column(String(80))
+    sector: Mapped[str | None] = mapped_column(String(200))
+    annual_revenue: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    legal_representative: Mapped[str] = mapped_column(String(200), nullable=False)
 
-    client = relationship("Client", back_populates="contacts")
+    client: Mapped[Client] = relationship(back_populates="institutional_profile")
 
 
-# ============================================================================
-# AUTHENTIFICATION
-# ============================================================================
+class ClientAddress(Base):
+    __tablename__ = "client_addresses"
 
-class ClientAuthentification(Base):
-    __tablename__ = "ClientsAuthentification"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    address_type: Mapped[str] = mapped_column(String(30), default="PRINCIPALE", nullable=False)
+    line1: Mapped[str] = mapped_column(String(200), nullable=False)
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    country: Mapped[str] = mapped_column(String(100), default="Haïti", nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    AuthID = Column(Integer, primary_key=True, autoincrement=True)
-    ClientID = Column(Integer, ForeignKey('Clients.ClientID', ondelete='CASCADE'), unique=True, nullable=False)
-    Email = Column(String(200), unique=True, nullable=False, index=True)
-    PasswordHash = Column(String(255), nullable=False)
-    EstActif = Column(Boolean, default=True)
-    DateCreation = Column(DateTime, server_default=func.getdate())
-    DateDerniereConnexion = Column(DateTime)
+    client: Mapped[Client] = relationship(back_populates="addresses")
 
-    client = relationship("Client", back_populates="auth")
+
+class ClientContact(Base):
+    __tablename__ = "client_contacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    contact_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    value: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    client: Mapped[Client] = relationship(back_populates="contacts")
+
+
+class ClientAuthentication(Base):
+    __tablename__ = "client_authentications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    client: Mapped[Client] = relationship(back_populates="auth")
 
 
 class RefreshToken(Base):
-    __tablename__ = "RefreshTokens"
+    __tablename__ = "refresh_tokens"
 
-    TokenID = Column(Integer, primary_key=True, autoincrement=True)
-    ClientID = Column(Integer, ForeignKey('Clients.ClientID', ondelete='CASCADE'), nullable=False)
-    Token = Column(String(500), unique=True, nullable=False, index=True)
-    DateCreation = Column(DateTime, server_default=func.getdate())
-    DateExpiration = Column(DateTime, nullable=False)
-    EstRevoque = Column(Boolean, default=False)
-    AdresseIP = Column(String(50))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(64))
 
-    client = relationship("Client", back_populates="refresh_tokens")
-
-
-# ============================================================================
-# COMPTES
-# ============================================================================
-
-class Compte(Base):
-    __tablename__ = "Comptes"
-
-    CompteID = Column(Integer, primary_key=True, autoincrement=True)
-    NumeroCompte = Column(String(50), unique=True, nullable=False)
-    TypeCompte = Column(String(30))
-    Devise = Column(String(3), default='HTG')
-    Solde = Column(Numeric(18, 2), default=0)
-    SoldeDisponible = Column(Numeric(18, 2), default=0)
-    DateOuverture = Column(DateTime, server_default=func.getdate())
-    DateFermeture = Column(DateTime)
-    StatutCompte = Column(String(20), default='ACTIF')
-
-    roles = relationship("CompteRole", back_populates="compte")
-    souscriptions = relationship("Souscription", back_populates="compte")
+    client: Mapped[Client] = relationship(back_populates="refresh_tokens")
 
 
-class CompteRole(Base):
-    __tablename__ = "ComptesRoles"
+class Account(Base):
+    __tablename__ = "accounts"
 
-    CompteRoleID = Column(Integer, primary_key=True, autoincrement=True)
-    CompteID = Column(Integer, ForeignKey('Comptes.CompteID'), nullable=False)
-    ClientID = Column(Integer, ForeignKey('Clients.ClientID'), nullable=False)
-    Role = Column(String(30))
-    DateDebut = Column(DateTime, server_default=func.getdate())
-    DateFin = Column(DateTime)
-    EstActif = Column(Boolean, default=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    account_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    balance: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
+    available_balance: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIF", nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    compte = relationship("Compte", back_populates="roles")
-    client = relationship("Client", back_populates="comptes_roles")
+    roles: Mapped[list["AccountRole"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="account")
 
 
-# ============================================================================
-# INSTRUMENTS
-# ============================================================================
+class AccountRole(Base):
+    __tablename__ = "account_roles"
+    __table_args__ = (UniqueConstraint("account_id", "client_id", name="uq_account_client_role"),)
 
-class TypeInstrument(Base):
-    __tablename__ = "TypesInstruments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(30), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    TypeInstrumentID = Column(Integer, primary_key=True, autoincrement=True)
-    Code = Column(String(50), unique=True, nullable=False)
-    Nom = Column(String(200))
-    Description = Column(Text)
+    account: Mapped[Account] = relationship(back_populates="roles")
+    client: Mapped[Client] = relationship(back_populates="account_roles")
 
-    instruments = relationship("Instrument", back_populates="type_instrument")
+
+class InstrumentType(Base):
+    __tablename__ = "instrument_types"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    instruments: Mapped[list["Instrument"]] = relationship(back_populates="instrument_type")
 
 
 class Instrument(Base):
-    __tablename__ = "Instruments"
+    __tablename__ = "instruments"
+    __table_args__ = (Index("ix_instruments_status_currency", "status", "currency"),)
 
-    InstrumentID = Column(Integer, primary_key=True, autoincrement=True)
-    TypeInstrumentID = Column(Integer, ForeignKey('TypesInstruments.TypeInstrumentID'), nullable=False)
-    Code = Column(String(50), unique=True, nullable=False)
-    Nom = Column(String(200), nullable=False)
-    Description = Column(Text)
-    Emetteur = Column(String(200))
-    TauxRendementAnnuel = Column(Numeric(5, 2))
-    DateEmission = Column(Date)
-    DateMaturite = Column(Date)
-    ValeurNominale = Column(Numeric(18, 2))
-    MontantMinimum = Column(Numeric(18, 2))
-    Devise = Column(String(3))
-    FrequencePaiementInterets = Column(String(20))
-    StatutInstrument = Column(String(20), default='DISPONIBLE')
+    id: Mapped[int] = mapped_column(primary_key=True)
+    instrument_type_id: Mapped[int] = mapped_column(ForeignKey("instrument_types.id"), nullable=False)
+    code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    issuer: Mapped[str] = mapped_column(String(200), nullable=False)
+    annual_yield: Mapped[Decimal] = mapped_column(Numeric(7, 4), nullable=False)
+    issue_date: Mapped[date] = mapped_column(Date, nullable=False)
+    maturity_date: Mapped[date] = mapped_column(Date, nullable=False)
+    nominal_value: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    minimum_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    interest_frequency: Mapped[str] = mapped_column(String(30), default="ANNUEL", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="DISPONIBLE", nullable=False)
 
-    type_instrument = relationship("TypeInstrument", back_populates="instruments")
-    souscriptions = relationship("Souscription", back_populates="instrument")
-
-
-# ============================================================================
-# SOUSCRIPTIONS
-# ============================================================================
-
-class Souscription(Base):
-    __tablename__ = "Souscriptions"
-
-    SouscriptionID = Column(Integer, primary_key=True, autoincrement=True)
-    CompteID = Column(Integer, ForeignKey('Comptes.CompteID'), nullable=False)
-    InstrumentID = Column(Integer, ForeignKey('Instruments.InstrumentID'), nullable=False)
-    MontantInvesti = Column(Numeric(18, 2), nullable=False)
-    NombreUnites = Column(Numeric(18, 6))
-    DateSouscription = Column(DateTime, server_default=func.getdate())
-    DateMaturiteEffective = Column(Date)
-    TauxSouscription = Column(Numeric(5, 2))
-    ValeurActuelle = Column(Numeric(18, 2))
-    InteretsAccumules = Column(Numeric(18, 2), default=0)
-    StatutSouscription = Column(String(20), default='ACTIVE')
-
-    compte = relationship("Compte", back_populates="souscriptions")
-    instrument = relationship("Instrument", back_populates="souscriptions")
-    paiements = relationship("PaiementInteret", back_populates="souscription")
+    instrument_type: Mapped[InstrumentType] = relationship(back_populates="instruments")
+    subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="instrument")
 
 
-class PaiementInteret(Base):
-    __tablename__ = "PaiementsInterets"
+class Subscription(Base):
+    __tablename__ = "subscriptions"
 
-    PaiementID = Column(Integer, primary_key=True, autoincrement=True)
-    SouscriptionID = Column(Integer, ForeignKey('Souscriptions.SouscriptionID'), nullable=False)
-    DatePaiement = Column(DateTime)
-    MontantInteret = Column(Numeric(18, 2))
-    StatutPaiement = Column(String(20))
-    TransactionID = Column(Integer)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"), nullable=False)
+    invested_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    units: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    subscribed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    effective_maturity_date: Mapped[date] = mapped_column(Date, nullable=False)
+    subscription_yield: Mapped[Decimal] = mapped_column(Numeric(7, 4), nullable=False)
+    current_value: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    accrued_interest: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", nullable=False)
 
-    souscription = relationship("Souscription", back_populates="paiements")
+    account: Mapped[Account] = relationship(back_populates="subscriptions")
+    instrument: Mapped[Instrument] = relationship(back_populates="subscriptions")
+    interest_payments: Mapped[list["InterestPayment"]] = relationship(back_populates="subscription")
 
 
-# ============================================================================
-# TRANSACTIONS
-# ============================================================================
+class InterestPayment(Base):
+    __tablename__ = "interest_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(ForeignKey("subscriptions.id"), nullable=False)
+    payment_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="PLANIFIE", nullable=False)
+    transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"))
+
+    subscription: Mapped[Subscription] = relationship(back_populates="interest_payments")
+
 
 class Transaction(Base):
-    __tablename__ = "Transactions"
+    __tablename__ = "transactions"
+    __table_args__ = (
+        Index("ix_transactions_source_created", "source_account_id", "created_at"),
+        Index("ix_transactions_destination_created", "destination_account_id", "created_at"),
+    )
 
-    TransactionID = Column(Integer, primary_key=True, autoincrement=True)
-    TypeTransaction = Column(String(50))
-    CompteSource = Column(Integer, ForeignKey('Comptes.CompteID'))
-    CompteDestination = Column(Integer, ForeignKey('Comptes.CompteID'))
-    Montant = Column(Numeric(18, 2), nullable=False)
-    Devise = Column(String(3), nullable=False)
-    Description = Column(Text)
-    StatutTransaction = Column(String(30), default='EN_ATTENTE')
-    DateCreation = Column(DateTime, server_default=func.getdate())
-    DateExecution = Column(DateTime)
-    EstAutomatique = Column(Boolean, default=False)
-    SouscriptionID = Column(Integer)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"))
+    destination_account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"))
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING_APPROVAL", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_automatic: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    subscription_id: Mapped[int | None] = mapped_column(ForeignKey("subscriptions.id"))
+    created_by_client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"))
+    approved_by_client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"))
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+
+    maker: Mapped[Client | None] = relationship(foreign_keys=[created_by_client_id], back_populates="created_transactions")
+    checker: Mapped[Client | None] = relationship(foreign_keys=[approved_by_client_id], back_populates="approved_transactions")
+
+
+class AccountingEntry(Base):
+    __tablename__ = "accounting_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False)
+    account_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"))
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    entity_id: Mapped[str | None] = mapped_column(String(80))
+    metadata_json: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

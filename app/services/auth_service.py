@@ -1,252 +1,130 @@
-"""
-Service d'authentification - VERSION SIMPLE
-"""
-from datetime import datetime, timedelta
-from typing import Optional
-from sqlalchemy.orm import Session
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
+
 from sqlalchemy import select
-from app.models.models import Client, ClientIndividuel, ClientInstitutionnel, ClientAuthentification, RefreshToken, ContactClient
-from app.core.security import verify_password, get_password_hash, create_access_token, create_refresh_token, decode_token
+from sqlalchemy.orm import Session, joinedload
+
 from app.core.config import settings
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_access_token,
+    hash_password,
+    hash_refresh_token,
+    verify_password,
+)
+from app.models.models import (
+    Account,
+    AccountRole,
+    Client,
+    ClientAddress,
+    ClientAuthentication,
+    ClientContact,
+    IndividualProfile,
+    InstitutionalProfile,
+    RefreshToken,
+)
 
 
 class AuthService:
-    """Service gérant l'authentification"""
-
     @staticmethod
-    def register_client(
-        db: Session,
-        client_type: str,
-        email: str,
-        password: str,
-        # Individuel
-        prenom: Optional[str] = None,
-        nom: Optional[str] = None,
-        date_naissance: Optional[str] = None,
-        numero_piece_identite: Optional[str] = None,
-        # Institutionnel
-        nom_entreprise: Optional[str] = None,
-        numero_registre_commerce: Optional[str] = None,
-        nom_representant_legal: Optional[str] = None
-    ):
-        """Inscrire un nouveau client"""
+    def register_client(db: Session, data: Any) -> Client:
+        email = str(data.email).lower()
+        if db.scalar(select(ClientAuthentication).where(ClientAuthentication.email == email)):
+            raise ValueError("Cette adresse email est déjà utilisée")
 
-        # Vérifier si l'email existe déjà
-        existing_auth = db.query(ClientAuthentification).filter(
-            ClientAuthentification.Email == email
-        ).first()
+        client_type = data.client_type.upper()
+        if client_type == "INDIVIDUEL":
+            required = {"prenom": data.prenom, "nom": data.nom, "date_naissance": data.date_naissance, "numero_piece_identite": data.numero_piece_identite}
+            if any(value in (None, "") for value in required.values()):
+                raise ValueError("Les informations du client individuel sont obligatoires")
+            birth_date = date.fromisoformat(data.date_naissance)
+        else:
+            required = {"nom_entreprise": data.nom_entreprise, "numero_registre_commerce": data.numero_registre_commerce, "nom_representant_legal": data.nom_representant_legal}
+            if any(value in (None, "") for value in required.values()):
+                raise ValueError("Les informations du client institutionnel sont obligatoires")
+            birth_date = None
 
-        if existing_auth:
-            raise ValueError("Cet email est déjà utilisé")
+        client = Client(client_type=client_type, risk_profile=data.profil_risque or "MODERE", status="ACTIF")
+        client.auth = ClientAuthentication(email=email, password_hash=hash_password(data.password), is_active=True)
+        if client_type == "INDIVIDUEL":
+            client.individual_profile = IndividualProfile(
+                first_name=data.prenom, last_name=data.nom, birth_date=birth_date,
+                nationality=data.nationalite, identity_type=data.type_piece_identite,
+                identity_number=data.numero_piece_identite, profession=data.profession,
+                income_source=data.source_revenus, estimated_annual_income=data.revenu_annuel_estime,
+            )
+        else:
+            client.institutional_profile = InstitutionalProfile(
+                company_name=data.nom_entreprise, registration_number=data.numero_registre_commerce,
+                legal_form=data.forme_juridique, sector=data.secteur,
+                annual_revenue=data.chiffre_affaires_annuel, legal_representative=data.nom_representant_legal,
+            )
 
-        # Créer le client
-        client = Client(
-            ClientType=client_type,
-            StatutClient='ACTIF'
-        )
+        if data.adresse_ligne1:
+            client.addresses.append(ClientAddress(line1=data.adresse_ligne1, city=data.ville or "Port-au-Prince", postal_code=data.code_postal, country=data.pays or "Haïti", is_primary=True))
+        if data.telephone:
+            client.contacts.append(ClientContact(contact_type="TELEPHONE", value=data.telephone, is_primary=True, is_verified=False))
+
         db.add(client)
-        db.flush()  # Pour obtenir le ClientID
-
-        # Créer le profil selon le type
-        if client_type == 'INDIVIDUEL':
-            if not all([prenom, nom, date_naissance, numero_piece_identite]):
-                raise ValueError("Informations manquantes pour un client individuel")
-
-            # Vérifier numéro pièce unique
-            existing_piece = db.query(ClientIndividuel).filter(
-                ClientIndividuel.NumeroPieceIdentite == numero_piece_identite
-            ).first()
-            if existing_piece:
-                raise ValueError("Ce numéro de pièce d'identité existe déjà")
-
-            client_individuel = ClientIndividuel(
-                ClientID=client.ClientID,
-                Prenom=prenom,
-                Nom=nom,
-                DateNaissance=date_naissance,
-                NumeroPieceIdentite=numero_piece_identite
-            )
-            db.add(client_individuel)
-
-        elif client_type == 'INSTITUTIONNEL':
-            if not all([nom_entreprise, numero_registre_commerce, nom_representant_legal]):
-                raise ValueError("Informations manquantes pour un client institutionnel")
-
-            # Vérifier registre commerce unique
-            existing_registre = db.query(ClientInstitutionnel).filter(
-                ClientInstitutionnel.NumeroRegistreCommerce == numero_registre_commerce
-            ).first()
-            if existing_registre:
-                raise ValueError("Ce numéro de registre de commerce existe déjà")
-
-            client_inst = ClientInstitutionnel(
-                ClientID=client.ClientID,
-                NomEntreprise=nom_entreprise,
-                NumeroRegistreCommerce=numero_registre_commerce,
-                NomRepresentantLegal=nom_representant_legal
-            )
-            db.add(client_inst)
-
-        # Créer l'authentification
-        password_hash = get_password_hash(password)
-        auth = ClientAuthentification(
-            ClientID=client.ClientID,
-            Email=email,
-            PasswordHash=password_hash,
-            EstActif=True
-        )
-        db.add(auth)
-
-        # Ajouter l'email comme contact
-        contact = ContactClient(
-            ClientID=client.ClientID,
-            TypeContact='EMAIL',
-            Valeur=email,
-            EstPrincipal=True,
-            EstVerifie=False
-        )
-        db.add(contact)
-
+        db.flush()
+        account = Account(account_number=f"INV-{datetime.now().year}-{client.id:05d}", account_type="INVESTISSEMENT", currency=data.devise or "USD", balance=0, available_balance=0, status="ACTIF")
+        account.roles.append(AccountRole(client=client, role="TITULAIRE_PRINCIPAL", is_active=True))
+        db.add(account)
         db.commit()
         db.refresh(client)
-
         return client
 
     @staticmethod
-    def login(db: Session, email: str, password: str, ip_address: Optional[str] = None):
-        """Connexion d'un client"""
+    def issue_tokens(db: Session, client: Client, ip_address: str | None = None) -> dict[str, str | int]:
+        access_token = create_access_token(client.id)
+        raw_refresh = create_refresh_token()
+        db.add(RefreshToken(
+            client_id=client.id,
+            token_hash=hash_refresh_token(raw_refresh),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+            ip_address=ip_address,
+        ))
+        return {"access_token": access_token, "refresh_token": raw_refresh, "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60}
 
-        # Récupérer l'authentification
-        auth = db.query(ClientAuthentification).filter(
-            ClientAuthentification.Email == email
-        ).first()
-
-        if not auth:
+    @staticmethod
+    def login(db: Session, email: str, password: str, ip_address: str | None = None) -> dict[str, Any]:
+        auth = db.scalar(select(ClientAuthentication).where(ClientAuthentication.email == str(email).lower()).options(joinedload(ClientAuthentication.client)))
+        if not auth or not auth.is_active or not verify_password(password, auth.password_hash):
             raise ValueError("Email ou mot de passe incorrect")
-
-        if not auth.EstActif:
-            raise ValueError("Compte désactivé")
-
-        # Vérifier le mot de passe
-        if not verify_password(password, auth.PasswordHash):
-            raise ValueError("Email ou mot de passe incorrect")
-
-        # Récupérer le client complet
-        client = db.query(Client).filter(Client.ClientID == auth.ClientID).first()
-
-        if client.StatutClient != 'ACTIF':
-            raise ValueError("Compte client suspendu ou fermé")
-
-        # Générer les tokens JWT
-        token_data = {
-            "sub": str(auth.ClientID),
-            "email": email,
-            "client_type": client.ClientType
-        }
-
-        access_token = create_access_token(token_data)
-        refresh_token_str = create_refresh_token(token_data)
-
-        # Stocker le refresh token
-        refresh_token = RefreshToken(
-            ClientID=auth.ClientID,
-            Token=refresh_token_str,
-            DateExpiration=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
-            AdresseIP=ip_address
-        )
-        db.add(refresh_token)
-
-        # Mettre à jour la dernière connexion
-        auth.DateDerniereConnexion = datetime.utcnow()
-
+        if auth.client.status != "ACTIF":
+            raise ValueError("Le client n'est pas actif")
+        auth.last_login_at = datetime.now(timezone.utc)
+        tokens = AuthService.issue_tokens(db, auth.client, ip_address)
         db.commit()
-
-        return {
-            "access_token": access_token,
-            "refresh_token": refresh_token_str,
-            "client": client,
-            "auth": auth
-        }
+        return {"client": auth.client, **tokens}
 
     @staticmethod
-    def refresh_access_token(db: Session, refresh_token_str: str):
-        """Rafraîchir l'access token"""
-
-        # Vérifier que le refresh token existe
-        refresh_token = db.query(RefreshToken).filter(
-            RefreshToken.Token == refresh_token_str
-        ).first()
-
-        if not refresh_token:
-            raise ValueError("Refresh token invalide")
-
-        if refresh_token.EstRevoque:
-            raise ValueError("Refresh token révoqué")
-
-        if refresh_token.DateExpiration < datetime.utcnow():
-            raise ValueError("Refresh token expiré")
-
-        # Décoder le token
-        payload = decode_token(refresh_token_str)
-        if not payload:
-            raise ValueError("Refresh token invalide")
-
-        # Récupérer le client
-        client = db.query(Client).filter(
-            Client.ClientID == refresh_token.ClientID
-        ).first()
-
-        auth = db.query(ClientAuthentification).filter(
-            ClientAuthentification.ClientID == client.ClientID
-        ).first()
-
-        # Générer un nouveau access token
-        token_data = {
-            "sub": str(client.ClientID),
-            "email": auth.Email,
-            "client_type": client.ClientType
-        }
-
-        access_token = create_access_token(token_data)
-
-        return {
-            "access_token": access_token,
-            "refresh_token": refresh_token_str
-        }
+    def refresh(db: Session, raw_token: str, ip_address: str | None = None) -> dict[str, Any]:
+        stored = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == hash_refresh_token(raw_token)).options(joinedload(RefreshToken.client)))
+        now = datetime.now(timezone.utc)
+        expires_at = stored.expires_at.replace(tzinfo=timezone.utc) if stored and stored.expires_at.tzinfo is None else stored.expires_at if stored else None
+        if not stored or stored.revoked_at or expires_at <= now or stored.client.status != "ACTIF":
+            raise ValueError("Refresh token invalide ou expiré")
+        stored.revoked_at = now
+        tokens = AuthService.issue_tokens(db, stored.client, ip_address)
+        db.commit()
+        return {"client": stored.client, **tokens}
 
     @staticmethod
-    def get_current_client(db: Session, token: str):
-        """Récupérer le client à partir du token"""
-
-        payload = decode_token(token)
-        if not payload:
-            raise ValueError("Token invalide")
-
-        client_id = payload.get("sub")
-        if not client_id:
-            raise ValueError("Token invalide")
-
-        # Récupérer le client
-        client = db.query(Client).filter(Client.ClientID == int(client_id)).first()
-
-        if not client:
-            raise ValueError("Client non trouvé")
-
-        if client.StatutClient != 'ACTIF':
-            raise ValueError("Compte désactivé")
-
-        return client
-
-    @staticmethod
-    def logout(db: Session, refresh_token_str: str):
-        """Déconnexion - révoquer le refresh token"""
-
-        refresh_token = db.query(RefreshToken).filter(
-            RefreshToken.Token == refresh_token_str
-        ).first()
-
-        if refresh_token:
-            refresh_token.EstRevoque = True
+    def logout(db: Session, raw_token: str) -> None:
+        stored = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == hash_refresh_token(raw_token)))
+        if stored and not stored.revoked_at:
+            stored.revoked_at = datetime.now(timezone.utc)
             db.commit()
 
-        return True
+    @staticmethod
+    def get_client_from_access_token(db: Session, token: str) -> Client | None:
+        payload = decode_access_token(token)
+        if not payload:
+            return None
+        try:
+            client_id = int(payload["sub"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return db.scalar(select(Client).where(Client.id == client_id).options(joinedload(Client.auth), joinedload(Client.individual_profile), joinedload(Client.institutional_profile)))

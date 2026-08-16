@@ -1,78 +1,29 @@
-"""
-Endpoints pour la gestion des Instruments Financiers
-"""
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from app.db.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.orm import Session, joinedload
+
 from app.core.dependencies import get_current_active_client
-from app.models.models import Client
-from app.schemas.instruments import *
-from app.services.instruments_service import InstrumentsService
+from app.db.database import get_db
+from app.models.models import Client, Instrument
+from app.api.v1.endpoints.serializers import instrument_dict
 
 router = APIRouter()
 
 
-@router.get("/disponibles", response_model=InstrumentsDisponiblesResponse)
-def get_instruments_disponibles(
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """Récupérer tous les instruments disponibles pour investissement"""
-    try:
-        instruments = InstrumentsService.get_instruments_disponibles(db)
-        return InstrumentsDisponiblesResponse(
-            total=len(instruments),
-            instruments=[InstrumentDetail.from_orm(i) for i in instruments]
-        )
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+@router.get("/")
+def list_instruments(status_filter: str | None = Query(default=None, alias="status"), currency: str | None = None, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    query = select(Instrument).options(joinedload(Instrument.instrument_type)).order_by(Instrument.maturity_date)
+    if status_filter:
+        query = query.where(Instrument.status == status_filter.upper())
+    if currency:
+        query = query.where(Instrument.currency == currency.upper())
+    instruments = [instrument_dict(item) for item in db.scalars(query).all()]
+    return {"total": len(instruments), "instruments": instruments}
 
 
-@router.get("/", response_model=InstrumentsListResponse)
-def get_all_instruments(
-    statut: Optional[str] = None,
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """Récupérer tous les instruments"""
-    try:
-        instruments = InstrumentsService.get_all_instruments(db, statut)
-        return InstrumentsListResponse(
-            total=len(instruments),
-            instruments=[InstrumentResponse.from_orm(i) for i in instruments]
-        )
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-@router.get("/{instrument_id}", response_model=InstrumentDetail)
-def get_instrument(
-    instrument_id: int,
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """Récupérer les détails d'un instrument"""
-    try:
-        instrument = InstrumentsService.get_instrument_by_id(db, instrument_id)
-        if not instrument:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instrument introuvable")
-
-        return InstrumentDetail.from_orm(instrument)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-@router.get("/types/", response_model=List[TypeInstrumentResponse])
-def get_types_instruments(
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """Récupérer tous les types d'instruments"""
-    try:
-        types = InstrumentsService.get_types_instruments(db)
-        return [TypeInstrumentResponse.from_orm(t) for t in types]
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+@router.get("/{instrument_id}")
+def get_instrument(instrument_id: int, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    instrument = db.scalar(select(Instrument).where(Instrument.id == instrument_id).options(joinedload(Instrument.instrument_type)))
+    if not instrument:
+        raise HTTPException(status_code=404, detail="Instrument introuvable")
+    return instrument_dict(instrument)

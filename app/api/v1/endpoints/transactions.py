@@ -1,255 +1,93 @@
-"""
-Endpoints pour la gestion des Transactions
-"""
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
-from app.db.database import get_db
+
+from app.api.v1.endpoints.serializers import transaction_dict
 from app.core.dependencies import get_current_active_client
-from app.models.models import Client
-from app.schemas.transactions import *
-from app.services.transactions_service import TransactionsService
-from app.services.comptes_service import ComptesService
+from app.db.database import get_db
+from app.models.models import AccountRole, Client, Transaction
+from app.schemas.api import TransactionCreate, TransactionReject
+from app.services.transaction_service import TransactionService
 
 router = APIRouter()
 
 
-@router.post("/depot", response_model=TransactionCreateResponse, status_code=status.HTTP_201_CREATED)
-def creer_depot(
-    data: TransactionDepot,
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """Créer un dépôt sur un compte"""
+@router.post("/", status_code=status.HTTP_201_CREATED)
+def create_transaction(payload: TransactionCreate, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
     try:
-        # Vérifier l'accès au compte
-        if not ComptesService.verifier_acces_compte(db, data.CompteDestination, current_client.ClientID):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé à ce compte")
-
-        transaction = TransactionsService.creer_transaction(
-            db=db,
-            type_transaction='DEPOT',
-            montant=data.Montant,
-            devise=data.Devise,
-            compte_destination=data.CompteDestination,
-            description=data.Description
-        )
-
-        # Exécuter immédiatement
-        transaction = TransactionsService.executer_transaction(db, transaction.TransactionID)
-
-        return TransactionCreateResponse(
-            success=True,
-            message="Dépôt créé avec succès",
-            transaction=TransactionResponse.from_orm(transaction)
-        )
-
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        transaction = TransactionService.create(db, client.id, payload.transaction_type, payload.amount, payload.currency, payload.source_account_id, payload.destination_account_id, payload.description)
+        return {"success": True, "message": "Transaction créée et placée en attente de validation", "transaction": transaction_dict(transaction, db)}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/retrait", response_model=TransactionCreateResponse, status_code=status.HTTP_201_CREATED)
-def creer_retrait(
-    data: TransactionRetrait,
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """Créer un retrait d'un compte"""
+@router.post("/depot", status_code=status.HTTP_201_CREATED)
+def create_deposit(payload: TransactionCreate, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    if payload.transaction_type != "DEPOT":
+        raise HTTPException(status_code=422, detail="transaction_type doit être DEPOT")
+    return create_transaction(payload, client, db)
+
+
+@router.post("/retrait", status_code=status.HTTP_201_CREATED)
+def create_withdrawal(payload: TransactionCreate, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    if payload.transaction_type != "RETRAIT":
+        raise HTTPException(status_code=422, detail="transaction_type doit être RETRAIT")
+    return create_transaction(payload, client, db)
+
+
+@router.post("/transfert", status_code=status.HTTP_201_CREATED)
+def create_transfer(payload: TransactionCreate, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    if payload.transaction_type != "TRANSFERT":
+        raise HTTPException(status_code=422, detail="transaction_type doit être TRANSFERT")
+    return create_transaction(payload, client, db)
+
+
+@router.post("/{transaction_id}/approve")
+def approve_transaction(transaction_id: int, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
     try:
-        # Vérifier l'accès au compte
-        if not ComptesService.verifier_role_compte(
-            db, data.CompteSource, current_client.ClientID,
-            ['TITULAIRE_PRINCIPAL', 'TITULAIRE_SECONDAIRE', 'MANDATAIRE']
-        ):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé")
-
-        transaction = TransactionsService.creer_transaction(
-            db=db,
-            type_transaction='RETRAIT',
-            montant=data.Montant,
-            devise=data.Devise,
-            compte_source=data.CompteSource,
-            description=data.Description
-        )
-
-        # Exécuter immédiatement
-        transaction = TransactionsService.executer_transaction(db, transaction.TransactionID)
-
-        return TransactionCreateResponse(
-            success=True,
-            message="Retrait créé avec succès",
-            transaction=TransactionResponse.from_orm(transaction)
-        )
-
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        transaction = TransactionService.approve(db, transaction_id, client.id)
+        return {"success": True, "message": "Transaction validée et exécutée", "transaction": transaction_dict(transaction, db)}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/transfert", response_model=TransactionCreateResponse, status_code=status.HTTP_201_CREATED)
-def creer_transfert(
-    data: TransactionTransfert,
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """Créer un transfert entre deux comptes"""
+@router.post("/{transaction_id}/reject")
+def reject_transaction(transaction_id: int, payload: TransactionReject, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
     try:
-        # Vérifier l'accès au compte source
-        if not ComptesService.verifier_role_compte(
-            db, data.CompteSource, current_client.ClientID,
-            ['TITULAIRE_PRINCIPAL', 'TITULAIRE_SECONDAIRE', 'MANDATAIRE']
-        ):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé au compte source")
-
-        transaction = TransactionsService.creer_transaction(
-            db=db,
-            type_transaction='TRANSFERT',
-            montant=data.Montant,
-            devise=data.Devise,
-            compte_source=data.CompteSource,
-            compte_destination=data.CompteDestination,
-            description=data.Description
-        )
-
-        # Exécuter immédiatement
-        transaction = TransactionsService.executer_transaction(db, transaction.TransactionID)
-
-        return TransactionCreateResponse(
-            success=True,
-            message="Transfert créé avec succès",
-            transaction=TransactionResponse.from_orm(transaction)
-        )
-
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        transaction = TransactionService.reject(db, transaction_id, client.id, payload.reason)
+        return {"success": True, "message": "Transaction rejetée", "transaction": transaction_dict(transaction, db)}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.get("/mes-transactions", response_model=TransactionsListResponse)
-def get_mes_transactions(
-    limit: int = Query(default=100, le=500),
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """Récupérer toutes les transactions du client"""
-    try:
-        transactions = TransactionsService.get_transactions_client(db, current_client.ClientID, limit)
-
-        # Enrichir avec les numéros de compte
-        transactions_detail = []
-        for t in transactions:
-            detail = TransactionDetail.from_orm(t)
-
-            if t.CompteSource:
-                compte_source = ComptesService.get_compte_by_id(db, t.CompteSource)
-                if compte_source:
-                    detail.compte_source_numero = compte_source.NumeroCompte
-
-            if t.CompteDestination:
-                compte_dest = ComptesService.get_compte_by_id(db, t.CompteDestination)
-                if compte_dest:
-                    detail.compte_destination_numero = compte_dest.NumeroCompte
-
-            transactions_detail.append(detail)
-
-        return TransactionsListResponse(
-            total=len(transactions_detail),
-            transactions=transactions_detail
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+@router.get("/mes-transactions")
+def list_transactions(limit: int = Query(default=100, ge=1, le=500), client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    account_ids = select(AccountRole.account_id).where(AccountRole.client_id == client.id, AccountRole.is_active.is_(True))
+    transactions = db.scalars(select(Transaction).where(or_(Transaction.source_account_id.in_(account_ids), Transaction.destination_account_id.in_(account_ids))).order_by(Transaction.created_at.desc()).limit(limit)).all()
+    result = [transaction_dict(item, db) for item in transactions]
+    return {"total": len(result), "transactions": result}
 
 
-@router.get("/compte/{compte_id}", response_model=HistoriqueTransactionsResponse)
-def get_transactions_compte(
-    compte_id: int,
-    limit: int = Query(default=100, le=500),
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """Récupérer l'historique des transactions d'un compte"""
-    try:
-        # Vérifier l'accès au compte
-        if not ComptesService.verifier_acces_compte(db, compte_id, current_client.ClientID):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé à ce compte")
-
-        compte = ComptesService.get_compte_by_id(db, compte_id)
-        if not compte:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Compte introuvable")
-
-        transactions = TransactionsService.get_transactions_compte(db, compte_id, limit)
-
-        # Enrichir avec les numéros de compte
-        transactions_detail = []
-        for t in transactions:
-            detail = TransactionDetail.from_orm(t)
-
-            if t.CompteSource:
-                compte_source = ComptesService.get_compte_by_id(db, t.CompteSource)
-                if compte_source:
-                    detail.compte_source_numero = compte_source.NumeroCompte
-
-            if t.CompteDestination:
-                compte_dest = ComptesService.get_compte_by_id(db, t.CompteDestination)
-                if compte_dest:
-                    detail.compte_destination_numero = compte_dest.NumeroCompte
-
-            transactions_detail.append(detail)
-
-        return HistoriqueTransactionsResponse(
-            compte_id=compte_id,
-            compte_numero=compte.NumeroCompte,
-            total=len(transactions_detail),
-            transactions=transactions_detail
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+@router.get("/compte/{account_id}")
+def list_account_transactions(account_id: int, limit: int = Query(default=100, ge=1, le=500), client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    if not db.scalar(select(AccountRole.id).where(AccountRole.account_id == account_id, AccountRole.client_id == client.id, AccountRole.is_active.is_(True))):
+        raise HTTPException(status_code=403, detail="Accès refusé à ce compte")
+    transactions = db.scalars(select(Transaction).where(or_(Transaction.source_account_id == account_id, Transaction.destination_account_id == account_id)).order_by(Transaction.created_at.desc()).limit(limit)).all()
+    return {"compte_id": account_id, "total": len(transactions), "transactions": [transaction_dict(item, db) for item in transactions]}
 
 
-@router.get("/{transaction_id}", response_model=TransactionDetail)
-def get_transaction(
-    transaction_id: int,
-    current_client: Client = Depends(get_current_active_client),
-    db: Session = Depends(get_db)
-):
-    """Récupérer les détails d'une transaction"""
-    try:
-        transaction = TransactionsService.get_transaction_by_id(db, transaction_id)
-        if not transaction:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction introuvable")
-
-        # Vérifier l'accès (le client doit avoir accès à au moins un des comptes)
-        has_access = False
-        if transaction.CompteSource:
-            has_access = ComptesService.verifier_acces_compte(db, transaction.CompteSource, current_client.ClientID)
-        if not has_access and transaction.CompteDestination:
-            has_access = ComptesService.verifier_acces_compte(db, transaction.CompteDestination, current_client.ClientID)
-
-        if not has_access:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès refusé")
-
-        detail = TransactionDetail.from_orm(transaction)
-
-        if transaction.CompteSource:
-            compte_source = ComptesService.get_compte_by_id(db, transaction.CompteSource)
-            if compte_source:
-                detail.compte_source_numero = compte_source.NumeroCompte
-
-        if transaction.CompteDestination:
-            compte_dest = ComptesService.get_compte_by_id(db, transaction.CompteDestination)
-            if compte_dest:
-                detail.compte_destination_numero = compte_dest.NumeroCompte
-
-        return detail
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+@router.get("/{transaction_id}")
+def get_transaction(transaction_id: int, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    transaction = db.get(Transaction, transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction introuvable")
+    account_ids = select(AccountRole.account_id).where(AccountRole.client_id == client.id, AccountRole.is_active.is_(True))
+    if not ((transaction.source_account_id and transaction.source_account_id in db.scalars(account_ids).all()) or (transaction.destination_account_id and transaction.destination_account_id in db.scalars(account_ids).all())):
+        raise HTTPException(status_code=403, detail="Accès refusé")
+    return transaction_dict(transaction, db)
