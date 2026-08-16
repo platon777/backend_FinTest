@@ -41,6 +41,10 @@ Le compte institutionnel contient 150 000 USD disponibles et une position de 100
 
 Paul peut consulter le compte joint HTG, mais son rôle `OBSERVATEUR` ne lui permet pas de créer ou valider un mouvement.
 
+### Echeance proche
+
+Marie dispose aussi de `OBL-BRH-2026`, une position de 5 000 USD arrivant a echeance dans 60 jours. Elle permet de montrer le suivi des echeances depuis le rapport client, puis le traitement de la demande de remboursement depuis le pilotage habilite.
+
 ## Exemple de connexion
 
 ```bash

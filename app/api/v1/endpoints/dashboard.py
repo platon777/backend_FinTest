@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -8,6 +8,7 @@ from app.api.v1.endpoints.serializers import account_dict, subscription_dict, tr
 from app.core.dependencies import get_current_active_client
 from app.db.database import get_db
 from app.models.models import Account, AccountRole, Client, Subscription, Transaction
+from app.services.reporting_service import ReportingService
 
 router = APIRouter()
 
@@ -71,3 +72,28 @@ def complete_dashboard(client: Client = Depends(get_current_active_client), db: 
         "investissements_actifs": active_investments(client, db),
         "statistiques_mensuelles": monthly_statistics(6, client, db),
     }
+
+
+@router.get("/rapports/client")
+def client_business_report(
+    horizon_days: int = Query(default=90, ge=30, le=365),
+    months: int = Query(default=6, ge=3, le=24),
+    client: Client = Depends(get_current_active_client),
+    db: Session = Depends(get_db),
+):
+    """Rapport portefeuille : devise, allocation, échéances, ordres et flux."""
+    return ReportingService.client_report(db, client.id, horizon_days=horizon_days, months=months)
+
+
+@router.get("/rapports/back-office")
+def backoffice_business_report(
+    horizon_days: int = Query(default=90, ge=30, le=365),
+    limit: int = Query(default=30, ge=1, le=100),
+    client: Client = Depends(get_current_active_client),
+    db: Session = Depends(get_db),
+):
+    """File de pilotage réservée aux profils habilités sur un périmètre."""
+    try:
+        return ReportingService.backoffice_report(db, client.id, horizon_days=horizon_days, limit=limit)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc

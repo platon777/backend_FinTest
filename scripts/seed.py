@@ -129,6 +129,8 @@ def main() -> None:
         edh = instrument(db, "OBL-EDH-2028", bond_type, name="Obligation Énergie EDH 2028", description="Financement d'infrastructures énergétiques nationales.", issuer="Électricité d'Haïti", annual_yield=Decimal("6.2500"), issue_date=date(2025, 12, 15), maturity_date=date(2028, 12, 15), nominal_value=Decimal("1000"), minimum_amount=Decimal("15000"), currency="USD", interest_frequency="ANNUEL", status="DISPONIBLE")
         fund = instrument(db, "FND-CARAIBE-2030", fund_type, name="Fonds Croissance Caraïbes", description="Fonds diversifié de croissance régionale.", issuer="ProFin Asset Management", annual_yield=Decimal("7.8000"), issue_date=date(2026, 1, 15), maturity_date=date(2030, 1, 15), nominal_value=Decimal("100"), minimum_amount=Decimal("25000"), currency="USD", interest_frequency="ANNUEL", status="DISPONIBLE")
 
+        maturity_bond = instrument(db, "OBL-BRH-2026", bond_type, name="Obligation BRH 2026 - Serie B", description="Obligation souveraine a echeance proche.", issuer="Banque de la Republique d'Haiti", annual_yield=Decimal("4.7500"), issue_date=date(2025, 9, 15), maturity_date=date(2026, 10, 15), nominal_value=Decimal("1000"), minimum_amount=Decimal("5000"), currency="USD", interest_frequency="ANNUEL", status="DISPONIBLE")
+
         if not db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id)):
             sub1 = Subscription(account=marie_usd, instrument=brh, invested_amount=Decimal("20000"), units=Decimal("20"), subscribed_at=datetime(2025, 7, 8, tzinfo=timezone.utc), effective_maturity_date=brh.maturity_date, subscription_yield=brh.annual_yield, current_value=Decimal("21100"), accrued_interest=Decimal("1100"), status="ACTIVE")
             sub2 = Subscription(account=marie_usd, instrument=edh, invested_amount=Decimal("15000"), units=Decimal("15"), subscribed_at=datetime(2026, 1, 20, tzinfo=timezone.utc), effective_maturity_date=edh.maturity_date, subscription_yield=edh.annual_yield, current_value=Decimal("15586"), accrued_interest=Decimal("586"), status="ACTIVE")
@@ -138,6 +140,12 @@ def main() -> None:
             tx1.subscription_id = sub1.id
             tx2 = executed_transaction(db, "SOUSCRIPTION", "15000", "USD", marie_usd, None, "Souscription Obligation Énergie EDH 2028", marie, datetime(2026, 1, 20, tzinfo=timezone.utc), sub2.id)
             tx2.subscription_id = sub2.id
+        if not db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id, Subscription.instrument_id == maturity_bond.id)):
+            maturity_sub = Subscription(account=marie_usd, instrument=maturity_bond, invested_amount=Decimal("5000"), units=Decimal("5"), subscribed_at=datetime(2025, 10, 15, tzinfo=timezone.utc), effective_maturity_date=maturity_bond.maturity_date, subscription_yield=maturity_bond.annual_yield, current_value=Decimal("5075"), accrued_interest=Decimal("75"), status="ACTIVE")
+            db.add(maturity_sub)
+            db.flush()
+            maturity_tx = executed_transaction(db, "SOUSCRIPTION", "5000", "USD", marie_usd, None, "Souscription Obligation BRH 2026 - Serie B", marie, datetime(2025, 10, 15, tzinfo=timezone.utc), maturity_sub.id)
+            maturity_tx.subscription_id = maturity_sub.id
         if not db.scalar(select(Subscription).where(Subscription.account_id == caribe_usd.id)):
             sub3 = Subscription(account=caribe_usd, instrument=fund, invested_amount=Decimal("100000"), units=Decimal("1000"), subscribed_at=datetime(2026, 2, 3, tzinfo=timezone.utc), effective_maturity_date=fund.maturity_date, subscription_yield=fund.annual_yield, current_value=Decimal("104700"), accrued_interest=Decimal("4700"), status="ACTIVE")
             db.add(sub3)
