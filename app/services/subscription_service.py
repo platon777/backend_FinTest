@@ -45,14 +45,16 @@ class SubscriptionService:
             raise ValueError("La devise du compte et de l'instrument doit être identique")
         if invested_amount < instrument.minimum_amount:
             raise ValueError(f"Le montant minimum est {instrument.minimum_amount} {instrument.currency}")
-        if account.available_balance < invested_amount:
+        fee_amount = (invested_amount * Decimal(instrument.entry_fee_rate) / Decimal("100")).quantize(Decimal("0.01"))
+        total_debit = invested_amount + fee_amount
+        if account.available_balance < total_debit:
             raise ValueError("Solde disponible insuffisant pour la souscription")
         calculated_units = units or (invested_amount / instrument.nominal_value)
         if calculated_units <= 0:
             raise ValueError("Le nombre d'unités doit être positif")
 
-        account.balance -= invested_amount
-        account.available_balance -= invested_amount
+        account.balance -= total_debit
+        account.available_balance -= total_debit
         subscription = Subscription(
             account_id=account.id,
             instrument_id=instrument.id,
@@ -62,6 +64,7 @@ class SubscriptionService:
             subscription_yield=instrument.annual_yield,
             current_value=invested_amount,
             accrued_interest=0,
+            fee_amount=fee_amount,
             status="ACTIVE",
         )
         db.add(subscription)
@@ -82,6 +85,14 @@ class SubscriptionService:
         if settings.PROTOTYPE_AUTO_APPROVE_SUBSCRIPTIONS:
             db.add(AccountingEntry(transaction_id=transaction.id, account_code=f"CLIENT_{account.id}", direction="CREDIT", amount=invested_amount, currency=account.currency))
             db.add(AccountingEntry(transaction_id=transaction.id, account_code=f"INVESTMENT_{instrument.code}", direction="DEBIT", amount=invested_amount, currency=account.currency))
+            if fee_amount:
+                fee_transaction = Transaction(transaction_type="FRAIS", source_account_id=account.id, amount=fee_amount, currency=account.currency, description=f"Frais d'entrée {instrument.code}", status="EXECUTED", executed_at=datetime.now(timezone.utc), subscription_id=subscription.id, created_by_client_id=client_id)
+                db.add(fee_transaction)
+                db.flush()
+                db.add_all([
+                    AccountingEntry(transaction_id=fee_transaction.id, account_code=f"CLIENT_{account.id}", direction="DEBIT", amount=fee_amount, currency=account.currency),
+                    AccountingEntry(transaction_id=fee_transaction.id, account_code="FEE_REVENUE", direction="CREDIT", amount=fee_amount, currency=account.currency),
+                ])
         audit(db, client_id, "SUBSCRIPTION_CREATED", "subscription", subscription.id, {"instrument": instrument.code, "amount": str(invested_amount)})
         db.commit()
         db.refresh(subscription)

@@ -46,7 +46,9 @@ REPORTING_OBJECTS = (
         END AS return_percentage,
         s.subscribed_at,
         s.effective_maturity_date,
-        s.status
+        s.status,
+        s.fee_amount,
+        i.entry_fee_rate
     FROM account_roles ar
     JOIN accounts a ON a.id = ar.account_id
     JOIN subscriptions s ON s.account_id = a.id

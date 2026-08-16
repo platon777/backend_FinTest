@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.models import (
     Account,
     AccountRole,
+    InterestPayment,
     Client,
     InvestmentOrder,
     Instrument,
@@ -17,6 +18,7 @@ from app.models.models import (
     Subscription,
     Transaction,
 )
+from app.services.investment_metrics import annualized_return
 
 
 OPEN_ORDER_STATUSES = {"SUBMITTED", "COMPLIANCE_REVIEW", "BACK_OFFICE_REVIEW", "READY_FOR_CHECKER"}
@@ -60,8 +62,11 @@ def _base_currency_bucket(currency: str) -> dict:
         "invested": Decimal("0.00"),
         "current_value": Decimal("0.00"),
         "accrued_interest": Decimal("0.00"),
+        "paid_coupons": Decimal("0.00"),
+        "fees": Decimal("0.00"),
         "return_amount": Decimal("0.00"),
         "return_percentage": Decimal("0.00"),
+        "tma_percentage": Decimal("0.00"),
         "available_cash": Decimal("0.00"),
         "balance": Decimal("0.00"),
         "active_positions": 0,
@@ -81,6 +86,16 @@ class ReportingService:
                 .options(joinedload(Subscription.instrument).joinedload(Instrument.instrument_type))
             )
         ) if account_ids else []
+        payments = list(
+            db.scalars(
+                select(InterestPayment)
+                .where(InterestPayment.subscription_id.in_([item.id for item in subscriptions]), InterestPayment.status == "PAYE")
+            )
+        ) if subscriptions else []
+        paid_coupons_by_subscription: dict[int, Decimal] = defaultdict(lambda: Decimal("0.00"))
+        for payment in payments:
+            paid_coupons_by_subscription[payment.subscription_id] += Decimal(payment.amount)
+
         orders = list(
             db.scalars(
                 select(InvestmentOrder)
@@ -101,6 +116,8 @@ class ReportingService:
             bucket["invested"] += Decimal(subscription.invested_amount)
             bucket["current_value"] += Decimal(subscription.current_value)
             bucket["accrued_interest"] += Decimal(subscription.accrued_interest)
+            bucket["paid_coupons"] += paid_coupons_by_subscription[subscription.id]
+            bucket["fees"] += Decimal(subscription.fee_amount)
             bucket["return_amount"] += Decimal(subscription.current_value) - Decimal(subscription.invested_amount)
             bucket["active_positions"] += 1
         for order in orders:
@@ -115,11 +132,15 @@ class ReportingService:
         today = date.today()
         maturity_limit = today + timedelta(days=horizon_days)
         maturities = []
+        tma_by_currency: dict[str, list[tuple[Decimal, Decimal]]] = defaultdict(list)
         for subscription in subscriptions:
             type_name = subscription.instrument.instrument_type.name if subscription.instrument.instrument_type else "Autre"
             currency = subscription.instrument.currency
             allocation[(type_name, currency)] += Decimal(subscription.current_value)
             days = (subscription.effective_maturity_date - today).days
+            paid_coupons = paid_coupons_by_subscription[subscription.id]
+            tma = annualized_return(Decimal(subscription.invested_amount), Decimal(subscription.current_value), subscription.subscribed_at.date(), today, paid_coupons, Decimal(subscription.fee_amount))
+            tma_by_currency[currency].append((Decimal(subscription.invested_amount), tma))
             position_rows.append({
                 "subscription_id": subscription.id,
                 "account_id": subscription.account_id,
@@ -131,6 +152,9 @@ class ReportingService:
                 "current_value": subscription.current_value,
                 "return_amount": _money(Decimal(subscription.current_value) - Decimal(subscription.invested_amount)),
                 "return_percentage": _money((Decimal(subscription.current_value) - Decimal(subscription.invested_amount)) / Decimal(subscription.invested_amount) * 100) if subscription.invested_amount else Decimal("0.00"),
+                "tma_percentage": tma,
+                "paid_coupons": paid_coupons,
+                "fees": subscription.fee_amount,
                 "maturity_date": subscription.effective_maturity_date,
                 "days_to_maturity": days,
             })
@@ -144,6 +168,10 @@ class ReportingService:
                     "maturity_date": subscription.effective_maturity_date,
                     "days_to_maturity": max(days, 0),
                 })
+
+        for currency, values in tma_by_currency.items():
+            invested_total = sum((amount for amount, _ in values), Decimal("0.00"))
+            by_currency[currency]["tma_percentage"] = (sum((amount * tma for amount, tma in values), Decimal("0.00")) / invested_total).quantize(Decimal("0.01")) if invested_total else Decimal("0.00")
 
         pipeline: dict[str, dict] = defaultdict(lambda: {"status": "", "count": 0, "amount_by_currency": defaultdict(lambda: Decimal("0.00"))})
         for order in orders:
@@ -171,7 +199,7 @@ class ReportingService:
         cashflow: dict[tuple[date, str], dict] = {}
         for transaction in transactions:
             key = (_month_start(transaction.created_at), transaction.currency)
-            row = cashflow.setdefault(key, {"month": key[0], "currency": key[1], "deposits": Decimal("0.00"), "withdrawals": Decimal("0.00"), "investments": Decimal("0.00"), "maturities": Decimal("0.00")})
+            row = cashflow.setdefault(key, {"month": key[0], "currency": key[1], "deposits": Decimal("0.00"), "withdrawals": Decimal("0.00"), "investments": Decimal("0.00"), "maturities": Decimal("0.00"), "coupon_payments": Decimal("0.00"), "fees": Decimal("0.00")})
             amount = Decimal(transaction.amount)
             if transaction.transaction_type == "DEPOT":
                 row["deposits"] += amount
@@ -179,9 +207,13 @@ class ReportingService:
                 row["withdrawals" if transaction.transaction_type != "SOUSCRIPTION" else "investments"] += amount
             elif transaction.transaction_type == "REMBOURSEMENT_MATURITE":
                 row["maturities"] += amount
+            elif transaction.transaction_type == "PAIEMENT_INTERET":
+                row["coupon_payments"] += amount
+            elif transaction.transaction_type == "FRAIS":
+                row["fees"] += amount
         cashflow_rows = []
         for row in sorted(cashflow.values(), key=lambda item: (item["month"], item["currency"])):
-            row["net"] = row["deposits"] + row["maturities"] - row["withdrawals"] - row["investments"]
+            row["net"] = row["deposits"] + row["maturities"] + row["coupon_payments"] - row["withdrawals"] - row["investments"] - row["fees"]
             cashflow_rows.append(row)
 
         alerts = []
@@ -279,10 +311,19 @@ class ReportingService:
             })
         queue = sorted(order_queue + transaction_queue, key=lambda item: item["created_at"])[:limit]
 
-        subscriptions = list(db.scalars(select(Subscription).where(Subscription.account_id.in_(account_ids), Subscription.status == "ACTIVE")))
+        subscriptions = list(db.scalars(select(Subscription).where(Subscription.account_id.in_(account_ids), Subscription.status == "ACTIVE").options(joinedload(Subscription.instrument))))
+        payments = list(db.scalars(select(InterestPayment).where(InterestPayment.subscription_id.in_([item.id for item in subscriptions]), InterestPayment.status == "PAYE"))) if subscriptions else []
+        paid_coupons = sum((Decimal(item.amount) for item in payments), Decimal("0.00"))
         positions_by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
+        fees_by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
+        aum_by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
         for subscription in subscriptions:
             positions_by_currency[subscription.instrument.currency] += Decimal(subscription.current_value)
+            fees_by_currency[subscription.instrument.currency] += Decimal(subscription.fee_amount)
+        for account in accounts:
+            aum_by_currency[account.currency] += Decimal(account.balance)
+        for currency, value in positions_by_currency.items():
+            aum_by_currency[currency] += value
         cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         rejected_orders = db.scalar(select(InvestmentOrder.id).where(InvestmentOrder.account_id.in_(account_ids), InvestmentOrder.status == "REJECTED", InvestmentOrder.updated_at >= cutoff).order_by(InvestmentOrder.updated_at.desc()).limit(1))
         maturities = [item for item in subscriptions if item.effective_maturity_date <= today + timedelta(days=horizon_days)]
@@ -304,9 +345,76 @@ class ReportingService:
                 "active_accounts": len(accounts),
                 "active_positions": len(subscriptions),
                 "maturities_next_horizon": len(maturities),
+                "aum_by_currency": dict(aum_by_currency),
+                "fees_by_currency": dict(fees_by_currency),
+                "paid_coupons": paid_coupons,
             },
             "workflow": [{"step": key, "count": value["count"], "amount_by_currency": dict(value["amount_by_currency"]), "oldest_age_days": value["oldest_age_days"]} for key, value in workflow.items()],
             "queue": queue,
             "positions_by_currency": [{"currency": currency, "current_value": value} for currency, value in positions_by_currency.items()],
+            "aum_by_currency": [{"currency": currency, "value": value} for currency, value in aum_by_currency.items()],
+            "fees_by_currency": [{"currency": currency, "value": value} for currency, value in fees_by_currency.items()],
             "exceptions": exceptions,
+        }
+
+    @staticmethod
+    def regulatory_report(db: Session, client_id: int, horizon_days: int = 90) -> dict:
+        """Projection interne de supervision : AUM, frais, coupons et activite.
+
+        Les montants ne sont jamais additionnes entre devises. Le rapport
+        est reserve aux profils habilites sur leurs comptes mandats.
+        """
+        account_ids = _account_ids(db, client_id, BACK_OFFICE_ROLES)
+        if not account_ids:
+            raise PermissionError("Ce profil ne possede pas d'habilitation de reporting")
+        accounts = list(db.scalars(select(Account).where(Account.id.in_(account_ids), Account.status == "ACTIF")))
+        subscriptions = list(db.scalars(select(Subscription).where(Subscription.account_id.in_(account_ids), Subscription.status.in_(["ACTIVE", "MATURITE_EN_ATTENTE"])).options(joinedload(Subscription.instrument))))
+        payment_rows = list(db.scalars(select(InterestPayment).where(InterestPayment.subscription_id.in_([item.id for item in subscriptions])).options(joinedload(InterestPayment.subscription).joinedload(Subscription.instrument)))) if subscriptions else []
+        transactions = list(db.scalars(select(Transaction).where(Transaction.status == "EXECUTED", or_(Transaction.source_account_id.in_(account_ids), Transaction.destination_account_id.in_(account_ids))).order_by(Transaction.created_at.desc())))
+        today = date.today()
+        aum: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
+        fees: dict[str, Decimal] = defaultdict(lambda: Decimal("0.00"))
+        positions = []
+        for account in accounts:
+            aum[account.currency] += Decimal(account.balance)
+        for subscription in subscriptions:
+            currency = subscription.instrument.currency
+            paid = sum((Decimal(item.amount) for item in payment_rows if item.subscription_id == subscription.id and item.status == "PAYE"), Decimal("0.00"))
+            aum[currency] += Decimal(subscription.current_value)
+            fees[currency] += Decimal(subscription.fee_amount)
+            positions.append({
+                "instrument_code": subscription.instrument.code,
+                "account_id": subscription.account_id,
+                "currency": currency,
+                "invested_amount": subscription.invested_amount,
+                "current_value": subscription.current_value,
+                "accrued_interest": subscription.accrued_interest,
+                "paid_coupons": paid,
+                "fees": subscription.fee_amount,
+                "tma_percentage": annualized_return(Decimal(subscription.invested_amount), Decimal(subscription.current_value), subscription.subscribed_at.date(), today, paid, Decimal(subscription.fee_amount)),
+                "maturity_date": subscription.effective_maturity_date,
+                "status": subscription.status,
+            })
+        for transaction in transactions:
+            if transaction.transaction_type == "FRAIS":
+                fees[transaction.currency] += Decimal(transaction.amount)
+        by_type: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: Decimal("0.00")))
+        for transaction in transactions:
+            by_type[transaction.transaction_type][transaction.currency] += Decimal(transaction.amount)
+        pending_coupons = [item for item in payment_rows if item.status == "EN_ATTENTE"]
+        upcoming = [item for item in subscriptions if item.effective_maturity_date <= today + timedelta(days=horizon_days)]
+        return {
+            "as_of": today,
+            "generated_at": datetime.now(timezone.utc),
+            "scope": {"accounts": len(accounts), "account_numbers": [item.account_number for item in accounts], "roles": sorted(BACK_OFFICE_ROLES)},
+            "aum_by_currency": [{"currency": currency, "value": value} for currency, value in sorted(aum.items())],
+            "fees_by_currency": [{"currency": currency, "value": value} for currency, value in sorted(fees.items())],
+            "positions": positions,
+            "coupon_control": {
+                "pending": len(pending_coupons),
+                "paid": len([item for item in payment_rows if item.status == "PAYE"]),
+                "paid_amount": sum((Decimal(item.amount) for item in payment_rows if item.status == "PAYE"), Decimal("0.00")),
+            },
+            "maturities_next_horizon": len(upcoming),
+            "activity_by_type": [{"transaction_type": key, "amount_by_currency": dict(value)} for key, value in by_type.items()],
         }

@@ -17,6 +17,10 @@ Les objets sont créés par la migration Alembic `0003_reporting_views`.
 
 ## API
 
+Le rapport reglementaire est expose par `GET /api/v1/dashboard/rapports/reglementaire`. Il presente l'AUM par devise, les frais, les positions valorisees, les coupons payes ou en attente et l'activite par type.
+
+Les rapports exposent aussi le TMA annualise par position, les coupons payes, les frais d'entree et les flux de tresorerie associes. Les coupons dus sont generes par `POST /api/v1/souscriptions/maintenance/coupons`, puis passent dans la file de validation existante.
+
 - `GET /api/v1/dashboard/rapports/client` : synthèse multi-devises, allocation,
   échéances à 90 jours, flux exécutés et demandes en cours;
 - `GET /api/v1/dashboard/rapports/back-office` : indicateurs, file de travail,

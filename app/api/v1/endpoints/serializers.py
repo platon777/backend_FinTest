@@ -1,4 +1,4 @@
-from app.models.models import Account, Instrument, InvestmentOrder, Subscription, Transaction
+from app.models.models import Account, Instrument, InterestPayment, InvestmentOrder, Subscription, Transaction
 
 
 def account_dict(account: Account, role: str | None = None) -> dict:
@@ -12,7 +12,7 @@ def account_dict(account: Account, role: str | None = None) -> dict:
 def instrument_dict(instrument: Instrument) -> dict:
     return {
         "id": instrument.id, "code": instrument.code, "name": instrument.name, "description": instrument.description,
-        "issuer": instrument.issuer, "annual_yield": instrument.annual_yield, "issue_date": instrument.issue_date,
+        "issuer": instrument.issuer, "annual_yield": instrument.annual_yield, "entry_fee_rate": instrument.entry_fee_rate, "issue_date": instrument.issue_date,
         "maturity_date": instrument.maturity_date, "nominal_value": instrument.nominal_value,
         "minimum_amount": instrument.minimum_amount, "currency": instrument.currency,
         "interest_frequency": instrument.interest_frequency, "status": instrument.status,
@@ -26,9 +26,25 @@ def subscription_dict(subscription: Subscription) -> dict:
         "invested_amount": subscription.invested_amount, "units": subscription.units, "subscribed_at": subscription.subscribed_at,
         "effective_maturity_date": subscription.effective_maturity_date, "subscription_yield": subscription.subscription_yield,
         "current_value": subscription.current_value, "accrued_interest": subscription.accrued_interest,
+        "fee_amount": subscription.fee_amount,
         "status": subscription.status, "instrument_name": subscription.instrument.name if subscription.instrument else None,
         "instrument_code": subscription.instrument.code if subscription.instrument else None,
         "currency": subscription.instrument.currency if subscription.instrument else None,
+    }
+
+
+def interest_payment_dict(payment: InterestPayment) -> dict:
+    subscription = payment.subscription
+    instrument = subscription.instrument if subscription else None
+    return {
+        "id": payment.id,
+        "subscription_id": payment.subscription_id,
+        "payment_date": payment.payment_date,
+        "amount": payment.amount,
+        "status": payment.status,
+        "transaction_id": payment.transaction_id,
+        "instrument_code": instrument.code if instrument else None,
+        "currency": instrument.currency if instrument else None,
     }
 
 
@@ -42,6 +58,8 @@ def transaction_dict(transaction: Transaction, db) -> dict:
         "executed_at": transaction.executed_at, "is_automatic": transaction.is_automatic, "subscription_id": transaction.subscription_id,
         "created_by_client_id": transaction.created_by_client_id, "approved_by_client_id": transaction.approved_by_client_id,
         "rejection_reason": transaction.rejection_reason,
+        "version": transaction.version, "reversal_of_transaction_id": transaction.reversal_of_transaction_id,
+        "reversed_at": transaction.reversed_at, "reversal_reason": transaction.reversal_reason,
         "source_account_number": source.account_number if source else None,
         "destination_account_number": destination.account_number if destination else None,
     }

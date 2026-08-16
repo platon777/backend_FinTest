@@ -16,6 +16,7 @@ from app.models.models import (
     ClientAuthentication,
     ClientContact,
     IndividualProfile,
+    InterestPayment,
     InstitutionalProfile,
     Instrument,
     InstrumentType,
@@ -94,7 +95,38 @@ def executed_transaction(db, transaction_type: str, amount: str, currency: str, 
             AccountingEntry(transaction_id=item.id, account_code=f"CLIENT_{source.id}", direction="CREDIT", amount=Decimal(amount), currency=currency),
             AccountingEntry(transaction_id=item.id, account_code="INVESTMENT_POSITION", direction="DEBIT", amount=Decimal(amount), currency=currency),
         ])
+    elif transaction_type == "PAIEMENT_INTERET" and destination:
+        db.add_all([
+            AccountingEntry(transaction_id=item.id, account_code="INTEREST_EXPENSE", direction="DEBIT", amount=Decimal(amount), currency=currency),
+            AccountingEntry(transaction_id=item.id, account_code=f"CLIENT_{destination.id}", direction="CREDIT", amount=Decimal(amount), currency=currency),
+        ])
+    elif transaction_type == "FRAIS" and source:
+        db.add_all([
+            AccountingEntry(transaction_id=item.id, account_code=f"CLIENT_{source.id}", direction="DEBIT", amount=Decimal(amount), currency=currency),
+            AccountingEntry(transaction_id=item.id, account_code="FEE_REVENUE", direction="CREDIT", amount=Decimal(amount), currency=currency),
+        ])
     return item
+
+
+def seed_coupon(db, subscription: Subscription, payment_date: date, status: str, client: Client) -> None:
+    existing = db.scalar(select(InterestPayment).where(InterestPayment.subscription_id == subscription.id, InterestPayment.payment_date == payment_date))
+    if existing:
+        return
+    periods = Decimal("2") if subscription.instrument.interest_frequency == "SEMESTRIEL" else Decimal("1")
+    amount = (Decimal(subscription.invested_amount) * Decimal(subscription.subscription_yield) / Decimal("100") / periods).quantize(Decimal("0.01"))
+    if status == "PAYE":
+        transaction = executed_transaction(db, "PAIEMENT_INTERET", str(amount), subscription.instrument.currency, None, subscription.account, f"Coupon {subscription.instrument.code} - {payment_date.isoformat()}", client, datetime.combine(payment_date, datetime.min.time(), tzinfo=timezone.utc), subscription.id)
+        subscription.account.balance += amount
+        subscription.account.available_balance += amount
+        payment = InterestPayment(subscription_id=subscription.id, payment_date=payment_date, amount=amount, status="PAYE", transaction_id=transaction.id)
+    elif status == "EN_ATTENTE":
+        transaction = Transaction(transaction_type="PAIEMENT_INTERET", destination_account_id=subscription.account_id, amount=amount, currency=subscription.instrument.currency, description=f"Coupon {subscription.instrument.code} - {payment_date.isoformat()}", status="PENDING_APPROVAL", is_automatic=True, subscription_id=subscription.id)
+        db.add(transaction)
+        db.flush()
+        payment = InterestPayment(subscription_id=subscription.id, payment_date=payment_date, amount=amount, status="EN_ATTENTE", transaction_id=transaction.id)
+    else:
+        payment = InterestPayment(subscription_id=subscription.id, payment_date=payment_date, amount=amount, status="PLANIFIE")
+    db.add(payment)
 
 
 def main() -> None:
@@ -130,6 +162,10 @@ def main() -> None:
         fund = instrument(db, "FND-CARAIBE-2030", fund_type, name="Fonds Croissance Caraïbes", description="Fonds diversifié de croissance régionale.", issuer="ProFin Asset Management", annual_yield=Decimal("7.8000"), issue_date=date(2026, 1, 15), maturity_date=date(2030, 1, 15), nominal_value=Decimal("100"), minimum_amount=Decimal("25000"), currency="USD", interest_frequency="ANNUEL", status="DISPONIBLE")
 
         maturity_bond = instrument(db, "OBL-BRH-2026", bond_type, name="Obligation BRH 2026 - Serie B", description="Obligation souveraine a echeance proche.", issuer="Banque de la Republique d'Haiti", annual_yield=Decimal("4.7500"), issue_date=date(2025, 9, 15), maturity_date=date(2026, 10, 15), nominal_value=Decimal("1000"), minimum_amount=Decimal("5000"), currency="USD", interest_frequency="ANNUEL", status="DISPONIBLE")
+        brh.entry_fee_rate = Decimal("0.50")
+        edh.entry_fee_rate = Decimal("0.40")
+        fund.entry_fee_rate = Decimal("0.75")
+        maturity_bond.entry_fee_rate = Decimal("0.50")
 
         if not db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id)):
             sub1 = Subscription(account=marie_usd, instrument=brh, invested_amount=Decimal("20000"), units=Decimal("20"), subscribed_at=datetime(2025, 7, 8, tzinfo=timezone.utc), effective_maturity_date=brh.maturity_date, subscription_yield=brh.annual_yield, current_value=Decimal("21100"), accrued_interest=Decimal("1100"), status="ACTIVE")
@@ -152,6 +188,16 @@ def main() -> None:
             db.flush()
             tx3 = executed_transaction(db, "SOUSCRIPTION", "100000", "USD", caribe_usd, None, "Souscription Fonds Croissance Caraïbes", caribe, datetime(2026, 2, 3, tzinfo=timezone.utc), sub3.id)
             tx3.subscription_id = sub3.id
+        for seeded_subscription in db.scalars(select(Subscription).where(Subscription.account_id.in_([marie_usd.id, caribe_usd.id]))).all():
+            if not seeded_subscription.fee_amount:
+                seeded_subscription.fee_amount = (Decimal(seeded_subscription.invested_amount) * Decimal(seeded_subscription.instrument.entry_fee_rate) / Decimal("100")).quantize(Decimal("0.01"))
+        brh_subscription = db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id, Subscription.instrument_id == brh.id))
+        edh_subscription = db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id, Subscription.instrument_id == edh.id))
+        if brh_subscription:
+            seed_coupon(db, brh_subscription, date(2026, 1, 8), "PAYE", marie)
+            seed_coupon(db, brh_subscription, date(2026, 7, 8), "EN_ATTENTE", marie)
+        if edh_subscription:
+            seed_coupon(db, edh_subscription, date(2027, 1, 20), "PLANIFIE", marie)
 
         if not db.scalar(select(Transaction).where(Transaction.description == "Dépôt initial Marie Jean")):
             executed_transaction(db, "DEPOT", "50000", "USD", None, marie_usd, "Dépôt initial Marie Jean", marie, datetime(2025, 6, 15, tzinfo=timezone.utc))
@@ -168,7 +214,7 @@ def main() -> None:
             db.add_all([OrderWorkflowStep(order_id=order.id, step_code=code, actor_profile=profile) for code, profile in (("CONFORMITE", "CONFORMITE"), ("BACK_OFFICE", "BACK_OFFICE"), ("CHECKER", "SUPERVISEUR"))])
 
         db.commit()
-        print("Seed ProFin terminé : 4 clients, 4 comptes, 3 instruments, 3 souscriptions, un ordre en attente et historique métier.")
+        print("Seed ProFin terminé : 4 clients, 4 comptes, 4 instruments, 4 souscriptions, coupons, frais, un ordre et historique métier.")
     finally:
         db.close()
 

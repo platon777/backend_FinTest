@@ -175,6 +175,7 @@ class Instrument(Base):
     description: Mapped[str | None] = mapped_column(Text)
     issuer: Mapped[str] = mapped_column(String(200), nullable=False)
     annual_yield: Mapped[Decimal] = mapped_column(Numeric(7, 4), nullable=False)
+    entry_fee_rate: Mapped[Decimal] = mapped_column(Numeric(7, 4), default=0, nullable=False)
     issue_date: Mapped[date] = mapped_column(Date, nullable=False)
     maturity_date: Mapped[date] = mapped_column(Date, nullable=False)
     nominal_value: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
@@ -200,6 +201,7 @@ class Subscription(Base):
     subscription_yield: Mapped[Decimal] = mapped_column(Numeric(7, 4), nullable=False)
     current_value: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     accrued_interest: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
+    fee_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE", nullable=False)
 
     account: Mapped[Account] = relationship(back_populates="subscriptions")
@@ -209,6 +211,7 @@ class Subscription(Base):
 
 class InterestPayment(Base):
     __tablename__ = "interest_payments"
+    __table_args__ = (UniqueConstraint("subscription_id", "payment_date", name="uq_interest_payment_subscription_date"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     subscription_id: Mapped[int] = mapped_column(ForeignKey("subscriptions.id"), nullable=False)
@@ -242,6 +245,10 @@ class Transaction(Base):
     created_by_client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"))
     approved_by_client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"))
     rejection_reason: Mapped[str | None] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    reversal_of_transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"))
+    reversed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reversal_reason: Mapped[str | None] = mapped_column(Text)
 
     maker: Mapped[Client | None] = relationship(foreign_keys=[created_by_client_id], back_populates="created_transactions")
     checker: Mapped[Client | None] = relationship(foreign_keys=[approved_by_client_id], back_populates="approved_transactions")
@@ -309,6 +316,8 @@ class AccountingEntry(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    posting_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    is_reversal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class AuditLog(Base):

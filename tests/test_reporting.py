@@ -28,6 +28,8 @@ def test_client_report_is_currency_aware_and_exposes_real_business_sections(clie
     usd = next(item for item in payload["summary_by_currency"] if item["currency"] == "USD")
     assert Decimal(str(usd["invested"])) == Decimal("500.00")
     assert usd["active_positions"] == 1
+    assert "tma_percentage" in usd
+    assert "fees" in usd
 
 
 def test_backoffice_report_is_scoped_to_mandataire_and_shows_order_queue(client_app, demo_data):
@@ -46,6 +48,11 @@ def test_backoffice_report_is_scoped_to_mandataire_and_shows_order_queue(client_
     assert payload["kpis"]["orders_in_review"] == 1
     assert payload["workflow"][0]["step"] == "CONFORMITE"
     assert payload["queue"][0]["queue_type"] == "INVESTMENT_ORDER"
+
+    regulatory = client_app.get("/api/v1/dashboard/rapports/reglementaire", headers=headers(second))
+    assert regulatory.status_code == 200, regulatory.text
+    regulatory_payload = regulatory.json()
+    assert {"aum_by_currency", "fees_by_currency", "positions", "coupon_control", "activity_by_type"} <= regulatory_payload.keys()
 
     forbidden = client_app.get("/api/v1/dashboard/rapports/back-office", headers=headers(first))
     assert forbidden.status_code == 403

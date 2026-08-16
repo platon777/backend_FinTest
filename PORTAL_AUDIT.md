@@ -15,6 +15,11 @@ Oui, le prototype est présentable pour un entretien d'analyste programmeur si l
 
 ## Correspondance avec le document du projet
 
+Les rapports presentent maintenant le TMA annualise calcule sur les flux dates,
+les frais d'entree, les coupons payes ou planifies et l'AUM par devise. Une
+contrepassation est testable comme une nouvelle operation de correction soumise
+a validation ; elle conserve l'operation d'origine et ses ecritures inversees.
+
 | Exigence | Prototype |
 |---|---|
 | KYC individuel/institutionnel | Marie, Paul et Caribe |

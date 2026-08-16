@@ -105,6 +105,7 @@ class InstrumentOut(APIModel):
     description: str | None
     issuer: str
     annual_yield: Decimal
+    entry_fee_rate: Decimal = Decimal("0")
     issue_date: date
     maturity_date: date
     nominal_value: Decimal
@@ -133,6 +134,7 @@ class SubscriptionOut(APIModel):
     subscription_yield: Decimal
     current_value: Decimal
     accrued_interest: Decimal
+    fee_amount: Decimal = Decimal("0")
     status: str
     instrument_name: str | None = None
     instrument_code: str | None = None
@@ -197,6 +199,10 @@ class TransactionReject(APIModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class TransactionReverse(APIModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class TransactionOut(APIModel):
     id: int
     transaction_type: str
@@ -213,8 +219,23 @@ class TransactionOut(APIModel):
     created_by_client_id: int
     approved_by_client_id: int | None = None
     rejection_reason: str | None = None
+    version: int = 1
+    reversal_of_transaction_id: int | None = None
+    reversed_at: datetime | None = None
+    reversal_reason: str | None = None
     source_account_number: str | None = None
     destination_account_number: str | None = None
+
+
+class InterestPaymentOut(APIModel):
+    id: int
+    subscription_id: int
+    payment_date: datetime
+    amount: Decimal
+    status: str
+    transaction_id: int | None = None
+    instrument_code: str | None = None
+    currency: str | None = None
 
 
 class TransactionList(APIModel):

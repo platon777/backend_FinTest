@@ -3,12 +3,13 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.v1.endpoints.serializers import subscription_dict
+from app.api.v1.endpoints.serializers import interest_payment_dict, subscription_dict
 from app.core.dependencies import get_current_active_client
 from app.db.database import get_db
 from app.models.models import Client
 from app.schemas.api import SubscriptionCreate
 from app.services.subscription_service import SubscriptionService
+from app.services.interest_service import InterestService
 
 router = APIRouter()
 
@@ -34,6 +35,18 @@ def list_subscriptions(client: Client = Depends(get_current_active_client), db: 
 def generate_maturities(as_of: date | None = Query(default=None), client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
     transactions = SubscriptionService.generate_maturity_transactions(db, as_of or date.today(), client.id)
     return {"success": True, "total": len(transactions), "transactions": [transaction_dict(item, db) for item in transactions]}
+
+
+@router.post("/maintenance/coupons")
+def generate_coupons(as_of: date | None = Query(default=None), client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    payments = InterestService.generate_due_payments(db, as_of or date.today(), client.id)
+    return {"success": True, "total": len(payments), "payments": [interest_payment_dict(item) for item in payments]}
+
+
+@router.get("/mes-coupons")
+def list_coupons(subscription_id: int | None = Query(default=None), client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    payments = InterestService.list_for_client(db, client.id, subscription_id)
+    return {"total": len(payments), "coupons": [interest_payment_dict(item) for item in payments]}
 
 
 @router.get("/{subscription_id}")

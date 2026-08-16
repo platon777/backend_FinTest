@@ -97,3 +97,16 @@ def backoffice_business_report(
         return ReportingService.backoffice_report(db, client.id, horizon_days=horizon_days, limit=limit)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.get("/rapports/reglementaire")
+def regulatory_business_report(
+    horizon_days: int = Query(default=90, ge=30, le=365),
+    client: Client = Depends(get_current_active_client),
+    db: Session = Depends(get_db),
+):
+    """Projection interne des actifs, frais, coupons et activite par devise."""
+    try:
+        return ReportingService.regulatory_report(db, client.id, horizon_days=horizon_days)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc

@@ -45,6 +45,14 @@ Paul peut consulter le compte joint HTG, mais son rôle `OBSERVATEUR` ne lui per
 
 Marie dispose aussi de `OBL-BRH-2026`, une position de 5 000 USD arrivant a echeance dans 60 jours. Elle permet de montrer le suivi des echeances depuis le rapport client, puis le traitement de la demande de remboursement depuis le pilotage habilite.
 
+### Rendement, coupons et frais
+
+Le portefeuille Marie porte un rendement annualise calcule sur les flux dates, des frais d'entree par instrument et des coupons BRH. Le jeu de donnees contient un coupon deja paye, un coupon en attente de validation et un coupon futur planifie.
+
+### Correction comptable
+
+Une transaction executee peut etre selectionnee pour une contrepassation. La correction cree une nouvelle operation soumise au controle, conserve l'operation d'origine et ajoute une version comptable inversee.
+
 ## Exemple de connexion
 
 ```bash

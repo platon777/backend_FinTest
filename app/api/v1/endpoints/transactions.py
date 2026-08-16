@@ -6,7 +6,7 @@ from app.api.v1.endpoints.serializers import transaction_dict
 from app.core.dependencies import get_current_active_client
 from app.db.database import get_db
 from app.models.models import AccountRole, Client, Transaction
-from app.schemas.api import TransactionCreate, TransactionReject
+from app.schemas.api import TransactionCreate, TransactionReject, TransactionReverse
 from app.services.transaction_service import TransactionService
 
 router = APIRouter()
@@ -60,6 +60,17 @@ def reject_transaction(transaction_id: int, payload: TransactionReject, client: 
     try:
         transaction = TransactionService.reject(db, transaction_id, client.id, payload.reason)
         return {"success": True, "message": "Transaction rejetée", "transaction": transaction_dict(transaction, db)}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{transaction_id}/reverse", status_code=status.HTTP_201_CREATED)
+def reverse_transaction(transaction_id: int, payload: TransactionReverse, client: Client = Depends(get_current_active_client), db: Session = Depends(get_db)):
+    try:
+        transaction = TransactionService.reverse(db, transaction_id, client.id, payload.reason)
+        return {"success": True, "message": "Contrepassation placee en attente de validation", "transaction": transaction_dict(transaction, db)}
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
