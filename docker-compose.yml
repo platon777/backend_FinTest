@@ -16,6 +16,17 @@ services:
       timeout: 5s
       retries: 10
 
+  db-admin:
+    image: adminer:4.8.1
+    container_name: profin-db-admin
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    ports:
+      - "5050:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
   api:
     build: .
     container_name: profin-api

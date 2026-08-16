@@ -21,6 +21,9 @@ La commande lance PostgreSQL, applique la migration Alembic, charge le seed idem
 - API : http://localhost:8000
 - Swagger : http://localhost:8000/api/v1/docs
 - Health : http://localhost:8000/health
+- Adminer : http://localhost:5050
+
+Dans Adminer, sélectionnez PostgreSQL, utilisez `db` comme serveur interne Docker, le port `5432`, la base `profin_core`, l'utilisateur `profin` et le mot de passe `profin_dev`.
 
 Le volume `profin_pgdata` conserve les données. Pour repartir de zéro en environnement de démonstration :
 
@@ -75,3 +78,4 @@ La base de production/démonstration reste PostgreSQL et est créée par `alembi
 
 - [Comptes de démonstration](DEMO_CREDENTIALS.md)
 - [Note de refonte backend](BACKEND_REFACTOR.md)
+- [Guide de lancement complet](../Codex_Profin/GUIDE_LANCEMENT_PROFIN.md)
