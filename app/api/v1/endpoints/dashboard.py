@@ -24,7 +24,11 @@ def overview(client: Client = Depends(get_current_active_client), db: Session = 
     total_value = sum((Decimal(item.current_value) for item in subscriptions), Decimal("0"))
     total_return = total_value - total_invested
     percentage = (total_return / total_invested * 100) if total_invested else Decimal("0")
-    currency = accounts[0].currency if accounts else "USD"
+    # Les soldes peuvent exister dans plusieurs devises. Pour les métriques
+    # de portefeuille, utiliser la devise des positions plutôt que l'ordre
+    # arbitraire des comptes; les liquidités détaillées restent exposées par
+    # devise dans la liste des comptes.
+    currency = next((item.instrument.currency for item in subscriptions if item.instrument), accounts[0].currency if accounts else "USD")
     return {
         "total_value": total_value, "total_invested": total_invested, "total_return": total_return,
         "return_percentage": percentage.quantize(Decimal("0.01")), "active_subscriptions": len(subscriptions),

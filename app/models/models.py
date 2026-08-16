@@ -247,6 +247,58 @@ class Transaction(Base):
     checker: Mapped[Client | None] = relationship(foreign_keys=[approved_by_client_id], back_populates="approved_transactions")
 
 
+class InvestmentOrder(Base):
+    """Ordre soumis par un client avant toute écriture de position.
+
+    L'ordre garde le parcours métier séparé de la transaction financière : une
+    soumission ne débite jamais le compte. La position et le mouvement
+    comptable ne sont créés qu'après validation maker/checker.
+    """
+
+    __tablename__ = "investment_orders"
+    __table_args__ = (
+        Index("ix_investment_orders_client_created", "client_id", "created_at"),
+        Index("ix_investment_orders_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False)
+    instrument_id: Mapped[int] = mapped_column(ForeignKey("instruments.id"), nullable=False)
+    order_type: Mapped[str] = mapped_column(String(20), default="SOUSCRIPTION", nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    units: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="SUBMITTED", nullable=False)
+    client_comment: Mapped[str | None] = mapped_column(Text)
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    submitted_by_client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False)
+    checked_by_client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"))
+    executed_transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"))
+    executed_subscription_id: Mapped[int | None] = mapped_column(ForeignKey("subscriptions.id"))
+
+    account: Mapped[Account] = relationship()
+    instrument: Mapped[Instrument] = relationship()
+    steps: Mapped[list["OrderWorkflowStep"]] = relationship(cascade="all, delete-orphan", order_by="OrderWorkflowStep.id")
+
+
+class OrderWorkflowStep(Base):
+    """Étapes internes simulées dans le prototype, sans connecteur externe."""
+
+    __tablename__ = "order_workflow_steps"
+    __table_args__ = (UniqueConstraint("order_id", "step_code", name="uq_order_workflow_step"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("investment_orders.id", ondelete="CASCADE"), nullable=False)
+    step_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False)
+    actor_profile: Mapped[str] = mapped_column(String(40), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class AccountingEntry(Base):
     __tablename__ = "accounting_entries"
 

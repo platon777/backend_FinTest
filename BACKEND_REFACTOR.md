@@ -1,31 +1,29 @@
-# Note de refonte backend
+# Refonte backend ProFin — périmètre prototype
 
-## Périmètre retenu
+Le backend est un monolithe modulaire FastAPI/PostgreSQL. Le cœur financier reste transactionnel afin que compte, position, transaction, écritures comptables et audit soient cohérents dans la même opération PostgreSQL.
 
-Cette refonte implémente le cœur critique décrit dans `Codex_Profin/projet analyste dev.docx` et l'orientation Core Investment Platform : une source de vérité relationnelle, la cohérence financière, les comptes/positions, les validations, les écritures comptables et l'audit.
+## Couverture métier
 
-Le système est volontairement un monolithe modulaire. Le dimensionnement fourni dans le document interne ne justifie pas de découper physiquement le cœur financier en microservices : les opérations qui touchent un compte, une position, une transaction et la comptabilité doivent rester atomiques dans la même transaction PostgreSQL.
+- KYC individuel et institutionnel, profil de risque et informations de contact;
+- comptes multi-devises et rôles `TITULAIRE_PRINCIPAL`, `MANDATAIRE`, `ADMINISTRATEUR`, `OBSERVATEUR`;
+- référentiel d'instruments, souscriptions, positions, rachats et maturités;
+- dépôt, retrait et transfert avec maker/checker;
+- ordre d'investissement client soumis avant exécution, montant réservé, étapes conformité → back-office → checker, rejet/annulation et libération de la réservation;
+- création atomique de la position, de la transaction `SOUSCRIPTION`, des écritures équilibrées et de l'audit à la dernière validation;
+- audit des créations, validations, rejets, exécutions et maturités;
+- PostgreSQL dockerisé, migrations Alembic additives, seed idempotent et tests d'intégration PostgreSQL.
 
-## Modèle de données
+## Règle d'exécution des ordres
 
-`clients` porte l'identité métier. Les profils KYC sont séparés entre `individual_profiles` et `institutional_profiles`. `accounts` et `account_roles` permettent la gestion de comptes partagés et la limitation systématique de l'accès. `instruments` et `subscriptions` représentent le référentiel et les positions.
-
-`transactions` conserve le maker (`created_by_client_id`), le checker (`approved_by_client_id`), l'état du workflow et les dates d'exécution. `accounting_entries` conserve les deux écritures générées à l'exécution. `audit_logs` garde la preuve métier de l'action.
-
-## Scénarios démontrés par le seed
-
-1. Marie Jean possède un compte USD d'investissement, une épargne HTG et deux obligations (BRH 2027 et EDH 2028), avec intérêts courus réalistes.
-2. Caribe Investissements S.A. possède un compte institutionnel USD et une position dans un fonds diversifié Caraïbes.
-3. Paul Joseph dispose d'un rôle `OBSERVATEUR` sur un compte joint HTG : il peut consulter mais ne peut pas créer de retrait.
-4. Les dépôts/retraits historiques sont exécutés et alimentent l'historique; les nouvelles opérations sont d'abord en attente de validation.
+Une soumission client ne crée pas immédiatement une position. Le montant diminue seulement de `available_balance` pour matérialiser une réservation. Après les trois contrôles, le solde comptable est débité, la position est créée et la transaction ainsi que les écritures sont enregistrées. Un rejet ou une annulation restitue le disponible.
 
 ## Limites assumées du prototype
 
-- Le bouton de souscription du prototype finalise immédiatement la position via `PROTOTYPE_AUTO_APPROVE_SUBSCRIPTIONS=true`, pour rendre le parcours investisseur testable. Les opérations cash génériques utilisent toujours maker/checker.
-- Aucun back-office ou rôle employé n'est exposé. Un futur front-office pourra utiliser le même workflow avec des permissions internes dédiées.
-- Pas de Redis, VPN, gateway public, IA, outbox, scheduler ou connecteurs externes pour l'instant.
-- Le moteur de maturité et le calcul de valeur sont prévus dans le modèle, mais l'intégration batch sera une étape ultérieure.
+- les profils internes sont simulés par des clients habilités sur un compte partagé afin de montrer le maker/checker sans ajouter un IdP interne;
+- les étapes conformité, back-office et reporting sont des étapes persistées, sans CRM, connecteur, outbox ou retry réseau;
+- Redis, VPN, gateway public, IA conversationnelle, scheduler de production, revalorisation de marché, réconciliation avancée et reporting AUM/fees/TCA restent hors périmètre de la démonstration;
+- la maturité est générée par une action de maintenance puis soumise au même contrôle, en attendant un job planifié.
 
 ## Passage vers la production
 
-Il faudra remplacer les secrets Docker, placer PostgreSQL derrière le réseau privé prévu, ajouter un IdP ou une gestion centralisée des utilisateurs si nécessaire, compléter les migrations Alembic explicites, ajouter la réconciliation comptable, les jobs de maturité, l'outbox d'intégration et les tests PostgreSQL d'intégration.
+Ajouter une identité interne séparée (conseiller, conformité, back-office, superviseur), un contrôle d'habilitation centralisé, une outbox transactionnelle avec retry, les connecteurs CRM/comptabilité, les jobs de maturité/revalorisation, la réconciliation, les rapports AUM/performance/frais, l'observabilité SIEM et le réseau privé prévu par l'architecture.

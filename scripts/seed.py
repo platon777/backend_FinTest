@@ -19,6 +19,8 @@ from app.models.models import (
     InstitutionalProfile,
     Instrument,
     InstrumentType,
+    InvestmentOrder,
+    OrderWorkflowStep,
     Subscription,
     Transaction,
 )
@@ -103,12 +105,15 @@ def main() -> None:
         caribe = find_or_create_client(db, "caribe.invest@demo.profin.ht", client_type="INSTITUTIONNEL", risk_profile="AGRESSIF", company_name="Caribe Investissements S.A.", registration_number="RC-DEMO-2024-014", legal_form="Société anonyme", sector="Gestion d'actifs", revenue=Decimal("12500000"), representative="Lucien Pierre", address="12 Boulevard Toussaint Louverture", city="Port-au-Prince", postal_code="HT6110", phone="+509 3700 1122")
         paul = find_or_create_client(db, "paul.observer@demo.profin.ht", client_type="INDIVIDUEL", risk_profile="CONSERVATEUR", first_name="Paul", last_name="Joseph", birth_date=date(1986, 7, 11), identity_number="CIN-DEMO-003", profession="Architecte", income_source="Honoraires professionnels", income=Decimal("54000"), address="8 Rue Lambert", city="Pétion-Ville", postal_code="HT6140", phone="+509 3622 8899")
 
+        sophie = find_or_create_client(db, "sophie.checker@demo.profin.ht", client_type="INDIVIDUEL", risk_profile="MODERE", first_name="Sophie", last_name="Laurent", birth_date=date(1988, 9, 14), identity_number="CIN-DEMO-004", profession="Administratrice de portefeuille", income_source="Salaire et placements", income=Decimal("96000"), address="22 Rue Rigaud", city="Petion-Ville", postal_code="HT6140", phone="+509 3844 7711")
         marie_usd = account(db, "INV-2026-00001", marie, "USD", "35000")
         marie_htg = account(db, "SVG-2026-00002", marie, "HTG", "420000", "EPARGNE")
         shared_htg = account(db, "JNT-2026-00003", marie, "HTG", "185000", "INVESTISSEMENT")
         if not db.scalar(select(AccountRole).where(AccountRole.account_id == shared_htg.id, AccountRole.client_id == paul.id)):
             shared_htg.roles.append(AccountRole(client=paul, role="OBSERVATEUR", is_active=True))
         caribe_usd = account(db, "INV-2026-00004", caribe, "USD", "150000")
+        if not db.scalar(select(AccountRole).where(AccountRole.account_id == marie_usd.id, AccountRole.client_id == sophie.id)):
+            marie_usd.roles.append(AccountRole(client=sophie, role="MANDATAIRE", is_active=True))
 
         bond_type = db.scalar(select(InstrumentType).where(InstrumentType.code == "OBL"))
         if not bond_type:
@@ -147,8 +152,15 @@ def main() -> None:
             executed_transaction(db, "RETRAIT", "15000", "USD", marie_usd, None, "Règlement de souscription BRH", marie, datetime(2025, 7, 8, tzinfo=timezone.utc))
             executed_transaction(db, "RETRAIT", "15000", "USD", marie_usd, None, "Règlement de souscription EDH", marie, datetime(2026, 1, 20, tzinfo=timezone.utc))
 
+        if not db.scalar(select(InvestmentOrder).where(InvestmentOrder.submitted_by_client_id == marie.id, InvestmentOrder.status == "SUBMITTED")):
+            order = InvestmentOrder(client_id=marie.id, account_id=marie_usd.id, instrument_id=brh.id, order_type="SOUSCRIPTION", amount=Decimal("10000"), units=Decimal("10"), currency="USD", status="SUBMITTED", client_comment="Allocation obligataire à valider", submitted_by_client_id=marie.id)
+            marie_usd.available_balance -= order.amount
+            db.add(order)
+            db.flush()
+            db.add_all([OrderWorkflowStep(order_id=order.id, step_code=code, actor_profile=profile) for code, profile in (("CONFORMITE", "CONFORMITE"), ("BACK_OFFICE", "BACK_OFFICE"), ("CHECKER", "SUPERVISEUR"))])
+
         db.commit()
-        print("Seed ProFin terminé : 3 clients, 4 comptes, 3 instruments, 3 souscriptions et historique métier.")
+        print("Seed ProFin terminé : 4 clients, 4 comptes, 3 instruments, 3 souscriptions, un ordre en attente et historique métier.")
     finally:
         db.close()
 

@@ -139,6 +139,51 @@ class SubscriptionOut(APIModel):
     currency: str | None = None
 
 
+class InvestmentOrderCreate(APIModel):
+    account_id: int
+    instrument_id: int
+    amount: Decimal = Field(gt=0)
+    units: Decimal | None = Field(default=None, gt=0)
+    client_comment: str | None = Field(default=None, max_length=1000)
+
+
+class OrderStepOut(APIModel):
+    step_code: str
+    status: str
+    actor_profile: str
+    notes: str | None = None
+    completed_at: datetime | None = None
+
+
+class OrderStepDecision(APIModel):
+    decision: Literal["APPROVE", "REJECT"]
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class InvestmentOrderOut(APIModel):
+    id: int
+    client_id: int
+    account_id: int
+    instrument_id: int
+    order_type: str
+    amount: Decimal
+    units: Decimal | None
+    currency: str
+    status: str
+    client_comment: str | None
+    rejection_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+    submitted_by_client_id: int
+    checked_by_client_id: int | None
+    executed_transaction_id: int | None
+    executed_subscription_id: int | None
+    instrument_name: str | None = None
+    instrument_code: str | None = None
+    account_number: str | None = None
+    steps: list[OrderStepOut] = Field(default_factory=list)
+
+
 class TransactionCreate(APIModel):
     transaction_type: Literal["DEPOT", "RETRAIT", "TRANSFERT"] = Field(validation_alias=AliasChoices("transaction_type", "TypeTransaction"))
     amount: Decimal = Field(gt=0, validation_alias=AliasChoices("amount", "Montant"))

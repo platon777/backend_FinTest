@@ -60,6 +60,19 @@ services:
       timeout: 5s
       retries: 10
 
+  test:
+    build: .
+    container_name: profin-api-tests
+    profiles: ["test"]
+    environment:
+      TEST_DATABASE_URL: postgresql+psycopg2://profin:profin_dev@db-test:5432/profin_test
+      SECRET_KEY: test-only-secret
+      APP_ENV: test
+    command: ["python", "-m", "pytest", "-q"]
+    depends_on:
+      db-test:
+        condition: service_healthy
+
 volumes:
   profin_pgdata:
   profin_pgtestdata:

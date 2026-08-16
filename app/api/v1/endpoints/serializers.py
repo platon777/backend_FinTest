@@ -1,4 +1,4 @@
-from app.models.models import Account, Instrument, Subscription, Transaction
+from app.models.models import Account, Instrument, InvestmentOrder, Subscription, Transaction
 
 
 def account_dict(account: Account, role: str | None = None) -> dict:
@@ -44,4 +44,33 @@ def transaction_dict(transaction: Transaction, db) -> dict:
         "rejection_reason": transaction.rejection_reason,
         "source_account_number": source.account_number if source else None,
         "destination_account_number": destination.account_number if destination else None,
+    }
+
+
+def order_dict(order: InvestmentOrder) -> dict:
+    return {
+        "id": order.id,
+        "client_id": order.client_id,
+        "account_id": order.account_id,
+        "instrument_id": order.instrument_id,
+        "order_type": order.order_type,
+        "amount": order.amount,
+        "units": order.units,
+        "currency": order.currency,
+        "status": order.status,
+        "client_comment": order.client_comment,
+        "rejection_reason": order.rejection_reason,
+        "created_at": order.created_at,
+        "updated_at": order.updated_at,
+        "submitted_by_client_id": order.submitted_by_client_id,
+        "checked_by_client_id": order.checked_by_client_id,
+        "executed_transaction_id": order.executed_transaction_id,
+        "executed_subscription_id": order.executed_subscription_id,
+        "instrument_name": order.instrument.name if order.instrument else None,
+        "instrument_code": order.instrument.code if order.instrument else None,
+        "account_number": order.account.account_number if order.account else None,
+        "steps": [
+            {"step_code": step.step_code, "status": step.status, "actor_profile": step.actor_profile, "notes": step.notes, "completed_at": step.completed_at}
+            for step in order.steps
+        ],
     }

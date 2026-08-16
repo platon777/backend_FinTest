@@ -177,3 +177,48 @@ def test_maturity_generates_pending_repayment_then_checker_executes_it(db_sessio
     db_session.refresh(demo_data["account"])
     assert subscription.status == "MATURE"
     assert demo_data["account"].available_balance == Decimal("1000.00")
+
+
+def test_investment_order_is_reserved_then_executed_after_three_workflow_steps(client_app, demo_data, db_session):
+    first = login(client_app, "first@profin.ht")
+    second = login(client_app, "second@profin.ht")
+    submitted = client_app.post("/api/v1/ordres/", headers=auth_headers(first), json={
+        "account_id": demo_data["account"].id, "instrument_id": demo_data["instrument"].id, "amount": "500",
+        "client_comment": "Allocation obligataire trimestrielle",
+    })
+    assert submitted.status_code == 201, submitted.text
+    order = submitted.json()["order"]
+    assert order["status"] == "SUBMITTED"
+    db_session.refresh(demo_data["account"])
+    assert demo_data["account"].available_balance == Decimal("500.00")
+    order_id = order["id"]
+
+    for step, expected in (("CONFORMITE", "BACK_OFFICE_REVIEW"), ("BACK_OFFICE", "READY_FOR_CHECKER"), ("CHECKER", "EXECUTED")):
+        response = client_app.post(f"/api/v1/ordres/{order_id}/steps/{step}", headers=auth_headers(second), json={"decision": "APPROVE", "notes": "Contrôle conforme"})
+        assert response.status_code == 200, response.text
+        assert response.json()["order"]["status"] == expected
+
+    db_session.expire_all()
+    account = db_session.get(type(demo_data["account"]), demo_data["account"].id)
+    assert account.balance == Decimal("500.00")
+    assert account.available_balance == Decimal("500.00")
+    assert db_session.query(Subscription).count() == 1
+    executed = db_session.query(Transaction).filter(Transaction.transaction_type == "SOUSCRIPTION").one()
+    assert executed.approved_by_client_id == demo_data["second"].id
+
+
+def test_investment_order_rejection_releases_reserved_amount_and_maker_cannot_review(client_app, demo_data, db_session):
+    first = login(client_app, "first@profin.ht")
+    second = login(client_app, "second@profin.ht")
+    submitted = client_app.post("/api/v1/ordres/", headers=auth_headers(first), json={
+        "account_id": demo_data["account"].id, "instrument_id": demo_data["instrument"].id, "amount": "500",
+    })
+    order_id = submitted.json()["order"]["id"]
+    own_review = client_app.post(f"/api/v1/ordres/{order_id}/steps/CONFORMITE", headers=auth_headers(first), json={"decision": "APPROVE"})
+    assert own_review.status_code == 403
+    rejected = client_app.post(f"/api/v1/ordres/{order_id}/steps/CONFORMITE", headers=auth_headers(second), json={"decision": "REJECT", "notes": "Document justificatif requis"})
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["order"]["status"] == "REJECTED"
+    db_session.refresh(demo_data["account"])
+    assert demo_data["account"].balance == Decimal("1000.00")
+    assert demo_data["account"].available_balance == Decimal("1000.00")
