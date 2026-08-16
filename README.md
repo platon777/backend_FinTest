@@ -23,6 +23,8 @@ La commande lance PostgreSQL, applique la migration Alembic, charge le seed idem
 - Health : http://localhost:8000/health
 - Adminer : http://localhost:5050
 
+Pour activer l'assistant IA localement, copiez `.env.example` vers `.env` et renseignez `OPENROUTER_API_KEY`. La clé reste dans l'environnement de l'API et n'est jamais envoyée au frontend. Sans clé, le cœur financier démarre normalement et l'assistant indique qu'il est indisponible.
+
 Dans Adminer, sélectionnez PostgreSQL, utilisez `db` comme serveur interne Docker, le port `5432`, la base `profin_core`, l'utilisateur `profin` et le mot de passe `profin_dev`.
 
 Le volume `profin_pgdata` conserve les données. Pour repartir de zéro en environnement de démonstration :

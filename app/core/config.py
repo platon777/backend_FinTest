@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     MAX_PAGE_SIZE: int = 100
     PROTOTYPE_AUTO_APPROVE_SUBSCRIPTIONS: bool = True
 
+    AI_ENABLED: bool = True
+    OPENROUTER_API_KEY: str | None = None
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_MODEL: str = "google/gemini-2.5-flash-lite"
+    OPENROUTER_TIMEOUT_SECONDS: float = 20.0
+    OPENROUTER_MAX_TOKENS: int = 500
+
     @property
     def allowed_origins(self) -> list[str]:
         return [item.strip() for item in self.ALLOWED_ORIGINS.split(",") if item.strip()]

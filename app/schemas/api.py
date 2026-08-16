@@ -74,6 +74,22 @@ class LoginResponse(APIModel):
     client: ClientInfo
 
 
+class AssistantHistoryMessage(APIModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class AssistantChatRequest(APIModel):
+    message: str = Field(min_length=1, max_length=2000)
+    history: list[AssistantHistoryMessage] = Field(default_factory=list, max_length=8)
+
+
+class AssistantChatResponse(APIModel):
+    answer: str
+    disclaimer: str
+    context_used: list[str]
+
+
 class RegisterResponse(APIModel):
     success: bool = True
     message: str
