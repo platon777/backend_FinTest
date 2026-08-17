@@ -10,6 +10,8 @@ Mot de passe commun : `ProfinDemo!2026`
 | Caribe Investissements S.A. | `caribe.invest@demo.profin.ht` | Institutionnel, risque agressif | USD `INV-2026-00004`, fonds Croissance Caraïbes, KYC institutionnel |
 | Paul Joseph | `paul.observer@demo.profin.ht` | Individuel, conservateur | Rôle `OBSERVATEUR` sur `JNT-2026-00003`; consultation seule |
 | Sophie Laurent | `sophie.checker@demo.profin.ht` | Individuelle, modérée | Rôle `MANDATAIRE` sur `INV-2026-00001`; profil de validation |
+| Nadia Bernard | `nadia.checker@demo.profin.ht` | Individuelle, modérée | Rôle `MANDATAIRE` sur le compte Marie; peut traiter une correction après sa création |
+| Nexa Patrimoine S.A. | `nexa.patrimoine@demo.profin.ht` | Institutionnel, trésorerie | USD `INV-2026-00005`, HTG `TRE-2026-00006`, position Caraïbes 2029 et opérations en attente/rejetées |
 
 ## Parcours de présentation
 
@@ -37,6 +39,21 @@ Le maker ne peut pas valider son propre ordre. Un rejet libère le montant rése
 
 Le compte institutionnel contient 150 000 USD disponibles et une position de 100 000 USD dans le fonds `FND-CARAIBE-2030`, valorisée à 104 700 USD.
 
+Un ordre de réallocation de 30 000 USD est déjà au stade `BACK_OFFICE_REVIEW`, avec la conformité approuvée et les contrôles opérationnels et finaux encore à traiter.
+
+### Nexa — entreprise multi-comptes
+
+Nexa Patrimoine représente une seconde entreprise avec deux comptes de nature différente : un compte d'investissement USD et un compte de trésorerie HTG. Son compte USD porte une obligation Caraïbes 2029 de 75 000 USD, avec une valeur actuelle de 76 200 USD.
+
+- Sophie a le rôle `MANDATAIRE` sur le compte USD et peut traiter la file de validation;
+- Paul a le rôle `OBSERVATEUR` sur le compte USD et peut consulter sans agir;
+- Nadia a le rôle `MANDATAIRE` sur le compte HTG;
+- un retrait USD de 25 000 est en attente de validation;
+- un retrait de 12 000 USD est rejeté avec un motif de justificatif manquant;
+- un ordre de 50 000 USD est rejeté pour allocation hors mandat.
+
+Ce cas permet de montrer que les habilitations sont attachées au compte, pas seulement à la personne, et que chaque décision conserve son motif.
+
 ### Paul — observateur
 
 Paul peut consulter le compte joint HTG, mais son rôle `OBSERVATEUR` ne lui permet pas de créer ou valider un mouvement.
@@ -52,6 +69,8 @@ Le portefeuille Marie porte un rendement annualise calcule sur les flux dates, d
 ### Correction comptable
 
 Une transaction executee peut etre selectionnee pour une contrepassation. La correction cree une nouvelle operation soumise au controle, conserve l'operation d'origine et ajoute une version comptable inversee.
+
+Le jeu de données contient un frais de tenue de compte de 125 USD sur Marie, ainsi qu'une contrepassation demandée par Sophie. Nadia peut ensuite reprendre la demande pour illustrer la séparation entre la personne qui crée la correction et celle qui la valide.
 
 ## Exemple de connexion
 

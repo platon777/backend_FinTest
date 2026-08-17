@@ -25,6 +25,7 @@ from app.models.models import (
     Subscription,
     Transaction,
 )
+from app.services.transaction_service import TransactionService
 
 
 PASSWORD = "ProfinDemo!2026"
@@ -55,14 +56,25 @@ def find_or_create_client(db, email: str, **kwargs) -> Client:
     return client
 
 
+def grant_role(db, account_item: Account, client: Client, role: str) -> AccountRole:
+    existing = db.scalar(select(AccountRole).where(AccountRole.account_id == account_item.id, AccountRole.client_id == client.id))
+    if existing:
+        return existing
+    assignment = AccountRole(account=account_item, client=client, role=role, is_active=True)
+    db.add(assignment)
+    db.flush()
+    return assignment
+
+
 def account(db, number: str, client: Client, currency: str, balance: str, account_type: str = "INVESTISSEMENT", role: str = "TITULAIRE_PRINCIPAL") -> Account:
     item = db.scalar(select(Account).where(Account.account_number == number))
     if item:
+        grant_role(db, item, client, role)
         return item
     item = Account(account_number=number, account_type=account_type, currency=currency, balance=Decimal(balance), available_balance=Decimal(balance), status="ACTIF")
-    item.roles.append(AccountRole(client=client, role=role, is_active=True))
     db.add(item)
     db.flush()
+    grant_role(db, item, client, role)
     return item
 
 
@@ -138,14 +150,23 @@ def main() -> None:
         paul = find_or_create_client(db, "paul.observer@demo.profin.ht", client_type="INDIVIDUEL", risk_profile="CONSERVATEUR", first_name="Paul", last_name="Joseph", birth_date=date(1986, 7, 11), identity_number="CIN-DEMO-003", profession="Architecte", income_source="Honoraires professionnels", income=Decimal("54000"), address="8 Rue Lambert", city="Pétion-Ville", postal_code="HT6140", phone="+509 3622 8899")
 
         sophie = find_or_create_client(db, "sophie.checker@demo.profin.ht", client_type="INDIVIDUEL", risk_profile="MODERE", first_name="Sophie", last_name="Laurent", birth_date=date(1988, 9, 14), identity_number="CIN-DEMO-004", profession="Administratrice de portefeuille", income_source="Salaire et placements", income=Decimal("96000"), address="22 Rue Rigaud", city="Petion-Ville", postal_code="HT6140", phone="+509 3844 7711")
+        nadia = find_or_create_client(db, "nadia.checker@demo.profin.ht", client_type="INDIVIDUEL", risk_profile="MODERE", first_name="Nadia", last_name="Bernard", birth_date=date(1985, 4, 5), identity_number="CIN-DEMO-005", profession="Responsable opérations", income_source="Salaire", income=Decimal("88000"), address="17 Rue Panaméricaine", city="Pétion-Ville", postal_code="HT6140", phone="+509 3666 4422")
+        nexa = find_or_create_client(db, "nexa.patrimoine@demo.profin.ht", client_type="INSTITUTIONNEL", risk_profile="MODERE", company_name="Nexa Patrimoine S.A.", registration_number="RC-DEMO-2025-031", legal_form="Société anonyme", sector="Gestion de trésorerie", revenue=Decimal("8400000"), representative="Élodie Saint-Fleur", address="31 Avenue Lamartinière", city="Delmas", postal_code="HT6120", phone="+509 3990 2244")
         marie_usd = account(db, "INV-2026-00001", marie, "USD", "35000")
         marie_htg = account(db, "SVG-2026-00002", marie, "HTG", "420000", "EPARGNE")
         shared_htg = account(db, "JNT-2026-00003", marie, "HTG", "185000", "INVESTISSEMENT")
-        if not db.scalar(select(AccountRole).where(AccountRole.account_id == shared_htg.id, AccountRole.client_id == paul.id)):
-            shared_htg.roles.append(AccountRole(client=paul, role="OBSERVATEUR", is_active=True))
+        grant_role(db, shared_htg, paul, "OBSERVATEUR")
+        grant_role(db, shared_htg, sophie, "MANDATAIRE")
         caribe_usd = account(db, "INV-2026-00004", caribe, "USD", "150000")
-        if not db.scalar(select(AccountRole).where(AccountRole.account_id == marie_usd.id, AccountRole.client_id == sophie.id)):
-            marie_usd.roles.append(AccountRole(client=sophie, role="MANDATAIRE", is_active=True))
+        grant_role(db, caribe_usd, sophie, "MANDATAIRE")
+        grant_role(db, caribe_usd, paul, "OBSERVATEUR")
+        grant_role(db, marie_usd, sophie, "MANDATAIRE")
+        grant_role(db, marie_usd, nadia, "MANDATAIRE")
+        nexa_usd = account(db, "INV-2026-00005", nexa, "USD", "180000")
+        nexa_htg = account(db, "TRE-2026-00006", nexa, "HTG", "950000", "TRESORERIE")
+        grant_role(db, nexa_usd, sophie, "MANDATAIRE")
+        grant_role(db, nexa_usd, paul, "OBSERVATEUR")
+        grant_role(db, nexa_htg, nadia, "MANDATAIRE")
 
         bond_type = db.scalar(select(InstrumentType).where(InstrumentType.code == "OBL"))
         if not bond_type:
@@ -162,10 +183,12 @@ def main() -> None:
         fund = instrument(db, "FND-CARAIBE-2030", fund_type, name="Fonds Croissance Caraïbes", description="Fonds diversifié de croissance régionale.", issuer="ProFin Asset Management", annual_yield=Decimal("7.8000"), issue_date=date(2026, 1, 15), maturity_date=date(2030, 1, 15), nominal_value=Decimal("100"), minimum_amount=Decimal("25000"), currency="USD", interest_frequency="ANNUEL", status="DISPONIBLE")
 
         maturity_bond = instrument(db, "OBL-BRH-2026", bond_type, name="Obligation BRH 2026 - Serie B", description="Obligation souveraine a echeance proche.", issuer="Banque de la Republique d'Haiti", annual_yield=Decimal("4.7500"), issue_date=date(2025, 9, 15), maturity_date=date(2026, 10, 15), nominal_value=Decimal("1000"), minimum_amount=Decimal("5000"), currency="USD", interest_frequency="ANNUEL", status="DISPONIBLE")
+        caribbean_bond = instrument(db, "OBL-CARAIBES-2029", bond_type, name="Obligation Caraïbes 2029", description="Financement régional avec coupon annuel et échéance intermédiaire.", issuer="Banque de développement des Caraïbes", annual_yield=Decimal("6.9000"), issue_date=date(2026, 2, 1), maturity_date=date(2029, 2, 1), nominal_value=Decimal("1000"), minimum_amount=Decimal("25000"), currency="USD", interest_frequency="ANNUEL", status="DISPONIBLE")
         brh.entry_fee_rate = Decimal("0.50")
         edh.entry_fee_rate = Decimal("0.40")
         fund.entry_fee_rate = Decimal("0.75")
         maturity_bond.entry_fee_rate = Decimal("0.50")
+        caribbean_bond.entry_fee_rate = Decimal("0.60")
 
         if not db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id)):
             sub1 = Subscription(account=marie_usd, instrument=brh, invested_amount=Decimal("20000"), units=Decimal("20"), subscribed_at=datetime(2025, 7, 8, tzinfo=timezone.utc), effective_maturity_date=brh.maturity_date, subscription_yield=brh.annual_yield, current_value=Decimal("21100"), accrued_interest=Decimal("1100"), status="ACTIVE")
@@ -188,9 +211,20 @@ def main() -> None:
             db.flush()
             tx3 = executed_transaction(db, "SOUSCRIPTION", "100000", "USD", caribe_usd, None, "Souscription Fonds Croissance Caraïbes", caribe, datetime(2026, 2, 3, tzinfo=timezone.utc), sub3.id)
             tx3.subscription_id = sub3.id
+        if not db.scalar(select(Subscription).where(Subscription.account_id == nexa_usd.id, Subscription.instrument_id == caribbean_bond.id)):
+            nexa_subscription = Subscription(account=nexa_usd, instrument=caribbean_bond, invested_amount=Decimal("75000"), units=Decimal("75"), subscribed_at=datetime(2026, 2, 12, tzinfo=timezone.utc), effective_maturity_date=caribbean_bond.maturity_date, subscription_yield=caribbean_bond.annual_yield, current_value=Decimal("76200"), accrued_interest=Decimal("1200"), status="ACTIVE")
+            db.add(nexa_subscription)
+            db.flush()
+            nexa_subscription_tx = executed_transaction(db, "SOUSCRIPTION", "75000", "USD", nexa_usd, None, "Souscription Obligation Caraïbes 2029", nexa, datetime(2026, 2, 12, tzinfo=timezone.utc), nexa_subscription.id)
+            nexa_subscription_tx.subscription_id = nexa_subscription.id
+            nexa_usd.balance -= Decimal("75000")
+            nexa_usd.available_balance -= Decimal("75000")
         for seeded_subscription in db.scalars(select(Subscription).where(Subscription.account_id.in_([marie_usd.id, caribe_usd.id]))).all():
             if not seeded_subscription.fee_amount:
                 seeded_subscription.fee_amount = (Decimal(seeded_subscription.invested_amount) * Decimal(seeded_subscription.instrument.entry_fee_rate) / Decimal("100")).quantize(Decimal("0.01"))
+        nexa_subscription = db.scalar(select(Subscription).where(Subscription.account_id == nexa_usd.id, Subscription.instrument_id == caribbean_bond.id))
+        if nexa_subscription and not nexa_subscription.fee_amount:
+            nexa_subscription.fee_amount = (Decimal(nexa_subscription.invested_amount) * Decimal(nexa_subscription.instrument.entry_fee_rate) / Decimal("100")).quantize(Decimal("0.01"))
         brh_subscription = db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id, Subscription.instrument_id == brh.id))
         edh_subscription = db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id, Subscription.instrument_id == edh.id))
         if brh_subscription:
@@ -205,6 +239,27 @@ def main() -> None:
             executed_transaction(db, "DEPOT", "250000", "USD", None, caribe_usd, "Apport initial Caribe Investissements", caribe, datetime(2026, 1, 5, tzinfo=timezone.utc))
             executed_transaction(db, "RETRAIT", "15000", "USD", marie_usd, None, "Règlement de souscription BRH", marie, datetime(2025, 7, 8, tzinfo=timezone.utc))
             executed_transaction(db, "RETRAIT", "15000", "USD", marie_usd, None, "Règlement de souscription EDH", marie, datetime(2026, 1, 20, tzinfo=timezone.utc))
+        if not db.scalar(select(Transaction).where(Transaction.description == "Apport initial Nexa Patrimoine")):
+            executed_transaction(db, "DEPOT", "250000", "USD", None, nexa_usd, "Apport initial Nexa Patrimoine", nexa, datetime(2026, 1, 9, tzinfo=timezone.utc))
+            executed_transaction(db, "DEPOT", "1200000", "HTG", None, nexa_htg, "Réserve de trésorerie Nexa Patrimoine", nexa, datetime(2026, 1, 10, tzinfo=timezone.utc))
+
+        fee_description = "Frais de tenue de compte - février 2026"
+        fee_transaction = db.scalar(select(Transaction).where(Transaction.description == fee_description))
+        if not fee_transaction:
+            fee_transaction = executed_transaction(db, "FRAIS", "125", "USD", marie_usd, None, fee_description, marie, datetime(2026, 2, 14, tzinfo=timezone.utc))
+            marie_usd.balance -= Decimal("125")
+            marie_usd.available_balance -= Decimal("125")
+        reversal = db.scalar(select(Transaction).where(Transaction.reversal_of_transaction_id == fee_transaction.id)) if fee_transaction else None
+        if fee_transaction and not reversal:
+            TransactionService.reverse(db, fee_transaction.id, sophie.id, "Correction d'un frais appliqué par erreur")
+
+        withdrawal_description = "Retrait de trésorerie Nexa en attente"
+        if not db.scalar(select(Transaction).where(Transaction.description == withdrawal_description)):
+            db.add(Transaction(transaction_type="RETRAIT", source_account_id=nexa_usd.id, amount=Decimal("25000"), currency="USD", description=withdrawal_description, status="PENDING_APPROVAL", created_by_client_id=nexa.id))
+            nexa_usd.available_balance -= Decimal("25000")
+        rejected_description = "Retrait Nexa refusé - justificatif requis"
+        if not db.scalar(select(Transaction).where(Transaction.description == rejected_description)):
+            db.add(Transaction(transaction_type="RETRAIT", source_account_id=nexa_usd.id, amount=Decimal("12000"), currency="USD", description=rejected_description, status="REJECTED", rejection_reason="Justificatif de provenance des fonds requis", created_by_client_id=nexa.id))
 
         if not db.scalar(select(InvestmentOrder).where(InvestmentOrder.submitted_by_client_id == marie.id, InvestmentOrder.status == "SUBMITTED")):
             order = InvestmentOrder(client_id=marie.id, account_id=marie_usd.id, instrument_id=brh.id, order_type="SOUSCRIPTION", amount=Decimal("10000"), units=Decimal("10"), currency="USD", status="SUBMITTED", client_comment="Allocation obligataire à valider", submitted_by_client_id=marie.id)
@@ -212,9 +267,28 @@ def main() -> None:
             db.add(order)
             db.flush()
             db.add_all([OrderWorkflowStep(order_id=order.id, step_code=code, actor_profile=profile) for code, profile in (("CONFORMITE", "CONFORMITE"), ("BACK_OFFICE", "BACK_OFFICE"), ("CHECKER", "SUPERVISEUR"))])
+        if not db.scalar(select(InvestmentOrder).where(InvestmentOrder.client_id == caribe.id, InvestmentOrder.client_comment == "Réallocation en attente du contrôle back-office")):
+            caribe_order = InvestmentOrder(client_id=caribe.id, account_id=caribe_usd.id, instrument_id=brh.id, order_type="SOUSCRIPTION", amount=Decimal("30000"), units=Decimal("30"), currency="USD", status="BACK_OFFICE_REVIEW", client_comment="Réallocation en attente du contrôle back-office", submitted_by_client_id=caribe.id)
+            caribe_usd.available_balance -= caribe_order.amount
+            db.add(caribe_order)
+            db.flush()
+            db.add_all([
+                OrderWorkflowStep(order_id=caribe_order.id, step_code="CONFORMITE", actor_profile="CONFORMITE", status="APPROVED", completed_at=datetime(2026, 2, 15, tzinfo=timezone.utc), notes="Dossier conforme"),
+                OrderWorkflowStep(order_id=caribe_order.id, step_code="BACK_OFFICE", actor_profile="BACK_OFFICE"),
+                OrderWorkflowStep(order_id=caribe_order.id, step_code="CHECKER", actor_profile="SUPERVISEUR"),
+            ])
+        if not db.scalar(select(InvestmentOrder).where(InvestmentOrder.client_id == nexa.id, InvestmentOrder.rejection_reason == "Allocation hors mandat approuvé")):
+            rejected_order = InvestmentOrder(client_id=nexa.id, account_id=nexa_usd.id, instrument_id=caribbean_bond.id, order_type="SOUSCRIPTION", amount=Decimal("50000"), units=Decimal("50"), currency="USD", status="REJECTED", rejection_reason="Allocation hors mandat approuvé", client_comment="Demande de diversification à revoir", submitted_by_client_id=nexa.id)
+            db.add(rejected_order)
+            db.flush()
+            db.add_all([
+                OrderWorkflowStep(order_id=rejected_order.id, step_code="CONFORMITE", actor_profile="CONFORMITE", status="REJECTED", completed_at=datetime(2026, 2, 13, tzinfo=timezone.utc), notes="Allocation hors mandat approuvé"),
+                OrderWorkflowStep(order_id=rejected_order.id, step_code="BACK_OFFICE", actor_profile="BACK_OFFICE"),
+                OrderWorkflowStep(order_id=rejected_order.id, step_code="CHECKER", actor_profile="SUPERVISEUR"),
+            ])
 
         db.commit()
-        print("Seed ProFin terminé : 4 clients, 4 comptes, 4 instruments, 4 souscriptions, coupons, frais, un ordre et historique métier.")
+        print("Seed ProFin terminé : 6 clients, 6 comptes, 5 instruments, positions, rôles multi-utilisateurs, frais, contrepassation, rejets et parcours maker/checker.")
     finally:
         db.close()
 

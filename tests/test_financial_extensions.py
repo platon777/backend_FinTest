@@ -73,6 +73,7 @@ def test_reversal_creates_compensating_transaction_and_new_posting_version(clien
     entries = db_session.query(AccountingEntry).filter(AccountingEntry.transaction_id == reversal_id).all()
     account = db_session.get(type(demo_data["account"]), demo_data["account"].id)
     assert reversal.status == "EXECUTED"
+    assert reversal.destination_account_id == demo_data["account"].id
     assert original.version == 2
     assert original.reversed_at is not None
     assert reversal.version == 2

@@ -163,6 +163,8 @@ class TransactionService:
             transaction_type="CONTREPASSATION",
             amount=original.amount,
             currency=original.currency,
+            source_account_id=original.source_account_id,
+            destination_account_id=original.destination_account_id,
             description=f"Contrepassation de la transaction {original.id}",
             status="PENDING_APPROVAL",
             reversal_of_transaction_id=original.id,
