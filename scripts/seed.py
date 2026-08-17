@@ -152,6 +152,8 @@ def main() -> None:
         sophie = find_or_create_client(db, "sophie.checker@demo.profin.ht", client_type="INDIVIDUEL", risk_profile="MODERE", first_name="Sophie", last_name="Laurent", birth_date=date(1988, 9, 14), identity_number="CIN-DEMO-004", profession="Administratrice de portefeuille", income_source="Salaire et placements", income=Decimal("96000"), address="22 Rue Rigaud", city="Petion-Ville", postal_code="HT6140", phone="+509 3844 7711")
         nadia = find_or_create_client(db, "nadia.checker@demo.profin.ht", client_type="INDIVIDUEL", risk_profile="MODERE", first_name="Nadia", last_name="Bernard", birth_date=date(1985, 4, 5), identity_number="CIN-DEMO-005", profession="Responsable opérations", income_source="Salaire", income=Decimal("88000"), address="17 Rue Panaméricaine", city="Pétion-Ville", postal_code="HT6140", phone="+509 3666 4422")
         nexa = find_or_create_client(db, "nexa.patrimoine@demo.profin.ht", client_type="INSTITUTIONNEL", risk_profile="MODERE", company_name="Nexa Patrimoine S.A.", registration_number="RC-DEMO-2025-031", legal_form="Société anonyme", sector="Gestion de trésorerie", revenue=Decimal("8400000"), representative="Élodie Saint-Fleur", address="31 Avenue Lamartinière", city="Delmas", postal_code="HT6120", phone="+509 3990 2244")
+        julien = find_or_create_client(db, "julien.bernard@demo.profin.ht", client_type="INDIVIDUEL", risk_profile="CONSERVATEUR", first_name="Julien", last_name="Bernard", birth_date=date(1979, 11, 2), identity_number="CIN-DEMO-006", profession="Ingenieur civil", income_source="Salaire et epargne", income=Decimal("69000"), address="14 Rue Panamericaine", city="Petion-Ville", postal_code="HT6140", phone="+509 3711 2034")
+        aline = find_or_create_client(db, "aline.michel@demo.profin.ht", client_type="INDIVIDUEL", risk_profile="MODERE", first_name="Aline", last_name="Michel", birth_date=date(1993, 2, 18), identity_number="CIN-DEMO-007", profession="Medecin", income_source="Revenus professionnels", income=Decimal("82000"), address="9 Rue Capois", city="Port-au-Prince", postal_code="HT6110", phone="+509 3888 1045")
         marie_usd = account(db, "INV-2026-00001", marie, "USD", "35000")
         marie_htg = account(db, "SVG-2026-00002", marie, "HTG", "420000", "EPARGNE")
         shared_htg = account(db, "JNT-2026-00003", marie, "HTG", "185000", "INVESTISSEMENT")
@@ -167,6 +169,11 @@ def main() -> None:
         grant_role(db, nexa_usd, sophie, "MANDATAIRE")
         grant_role(db, nexa_usd, paul, "OBSERVATEUR")
         grant_role(db, nexa_htg, nadia, "MANDATAIRE")
+        julien_usd = account(db, "INV-2026-00007", julien, "USD", "60000")
+        aline_usd = account(db, "INV-2026-00008", aline, "USD", "50000")
+        grant_role(db, julien_usd, sophie, "MANDATAIRE")
+        grant_role(db, julien_usd, paul, "OBSERVATEUR")
+        grant_role(db, aline_usd, sophie, "MANDATAIRE")
 
         bond_type = db.scalar(select(InstrumentType).where(InstrumentType.code == "OBL"))
         if not bond_type:
@@ -219,12 +226,34 @@ def main() -> None:
             nexa_subscription_tx.subscription_id = nexa_subscription.id
             nexa_usd.balance -= Decimal("75000")
             nexa_usd.available_balance -= Decimal("75000")
+        if not db.scalar(select(Subscription).where(Subscription.account_id == julien_usd.id, Subscription.instrument_id == brh.id)):
+            julien_subscription = Subscription(account=julien_usd, instrument=brh, invested_amount=Decimal("10000"), units=Decimal("10"), subscribed_at=datetime(2026, 3, 8, tzinfo=timezone.utc), effective_maturity_date=brh.maturity_date, subscription_yield=brh.annual_yield, current_value=Decimal("10250"), accrued_interest=Decimal("250"), status="ACTIVE")
+            db.add(julien_subscription)
+            db.flush()
+            julien_subscription_tx = executed_transaction(db, "SOUSCRIPTION", "10000", "USD", julien_usd, None, "Souscription Obligation BRH 2027 - Julien Bernard", julien, datetime(2026, 3, 8, tzinfo=timezone.utc), julien_subscription.id)
+            julien_subscription_tx.subscription_id = julien_subscription.id
+            julien_usd.balance -= Decimal("10000")
+            julien_usd.available_balance -= Decimal("10000")
+        if not db.scalar(select(Subscription).where(Subscription.account_id == aline_usd.id, Subscription.instrument_id == edh.id)):
+            aline_subscription = Subscription(account=aline_usd, instrument=edh, invested_amount=Decimal("18000"), units=Decimal("18"), subscribed_at=datetime(2026, 4, 22, tzinfo=timezone.utc), effective_maturity_date=edh.maturity_date, subscription_yield=edh.annual_yield, current_value=Decimal("18220"), accrued_interest=Decimal("220"), status="ACTIVE")
+            db.add(aline_subscription)
+            db.flush()
+            aline_subscription_tx = executed_transaction(db, "SOUSCRIPTION", "18000", "USD", aline_usd, None, "Souscription Obligation EDH 2028 - Aline Michel", aline, datetime(2026, 4, 22, tzinfo=timezone.utc), aline_subscription.id)
+            aline_subscription_tx.subscription_id = aline_subscription.id
+            aline_usd.balance -= Decimal("18000")
+            aline_usd.available_balance -= Decimal("18000")
         for seeded_subscription in db.scalars(select(Subscription).where(Subscription.account_id.in_([marie_usd.id, caribe_usd.id]))).all():
             if not seeded_subscription.fee_amount:
                 seeded_subscription.fee_amount = (Decimal(seeded_subscription.invested_amount) * Decimal(seeded_subscription.instrument.entry_fee_rate) / Decimal("100")).quantize(Decimal("0.01"))
         nexa_subscription = db.scalar(select(Subscription).where(Subscription.account_id == nexa_usd.id, Subscription.instrument_id == caribbean_bond.id))
         if nexa_subscription and not nexa_subscription.fee_amount:
             nexa_subscription.fee_amount = (Decimal(nexa_subscription.invested_amount) * Decimal(nexa_subscription.instrument.entry_fee_rate) / Decimal("100")).quantize(Decimal("0.01"))
+        julien_subscription = db.scalar(select(Subscription).where(Subscription.account_id == julien_usd.id, Subscription.instrument_id == brh.id))
+        if julien_subscription and not julien_subscription.fee_amount:
+            julien_subscription.fee_amount = (Decimal(julien_subscription.invested_amount) * Decimal(julien_subscription.instrument.entry_fee_rate) / Decimal("100")).quantize(Decimal("0.01"))
+        aline_subscription = db.scalar(select(Subscription).where(Subscription.account_id == aline_usd.id, Subscription.instrument_id == edh.id))
+        if aline_subscription and not aline_subscription.fee_amount:
+            aline_subscription.fee_amount = (Decimal(aline_subscription.invested_amount) * Decimal(aline_subscription.instrument.entry_fee_rate) / Decimal("100")).quantize(Decimal("0.01"))
         brh_subscription = db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id, Subscription.instrument_id == brh.id))
         edh_subscription = db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id, Subscription.instrument_id == edh.id))
         if brh_subscription:
@@ -232,6 +261,15 @@ def main() -> None:
             seed_coupon(db, brh_subscription, date(2026, 7, 8), "EN_ATTENTE", marie)
         if edh_subscription:
             seed_coupon(db, edh_subscription, date(2027, 1, 20), "PLANIFIE", marie)
+        maturity_subscription = db.scalar(select(Subscription).where(Subscription.account_id == marie_usd.id, Subscription.instrument_id == maturity_bond.id))
+        if maturity_subscription:
+            seed_coupon(db, maturity_subscription, date(2026, 10, 15), "PLANIFIE", marie)
+        if nexa_subscription:
+            seed_coupon(db, nexa_subscription, date(2027, 2, 12), "PLANIFIE", nexa)
+        if julien_subscription:
+            seed_coupon(db, julien_subscription, date(2026, 7, 8), "EN_ATTENTE", julien)
+        if aline_subscription:
+            seed_coupon(db, aline_subscription, date(2027, 4, 22), "PLANIFIE", aline)
 
         if not db.scalar(select(Transaction).where(Transaction.description == "Dépôt initial Marie Jean")):
             executed_transaction(db, "DEPOT", "50000", "USD", None, marie_usd, "Dépôt initial Marie Jean", marie, datetime(2025, 6, 15, tzinfo=timezone.utc))
@@ -242,6 +280,10 @@ def main() -> None:
         if not db.scalar(select(Transaction).where(Transaction.description == "Apport initial Nexa Patrimoine")):
             executed_transaction(db, "DEPOT", "250000", "USD", None, nexa_usd, "Apport initial Nexa Patrimoine", nexa, datetime(2026, 1, 9, tzinfo=timezone.utc))
             executed_transaction(db, "DEPOT", "1200000", "HTG", None, nexa_htg, "Réserve de trésorerie Nexa Patrimoine", nexa, datetime(2026, 1, 10, tzinfo=timezone.utc))
+        if not db.scalar(select(Transaction).where(Transaction.description == "Dépôt initial Julien Bernard")):
+            executed_transaction(db, "DEPOT", "60000", "USD", None, julien_usd, "Dépôt initial Julien Bernard", julien, datetime(2026, 3, 1, tzinfo=timezone.utc))
+        if not db.scalar(select(Transaction).where(Transaction.description == "Dépôt initial Aline Michel")):
+            executed_transaction(db, "DEPOT", "50000", "USD", None, aline_usd, "Dépôt initial Aline Michel", aline, datetime(2026, 4, 10, tzinfo=timezone.utc))
 
         fee_description = "Frais de tenue de compte - février 2026"
         fee_transaction = db.scalar(select(Transaction).where(Transaction.description == fee_description))
@@ -288,7 +330,7 @@ def main() -> None:
             ])
 
         db.commit()
-        print("Seed ProFin terminé : 6 clients, 6 comptes, 5 instruments, positions, rôles multi-utilisateurs, frais, contrepassation, rejets et parcours maker/checker.")
+        print("Seed ProFin terminé : 8 clients, 8 comptes, 5 instruments, positions, coupons, rôles multi-utilisateurs, frais, contrepassation, rejets et parcours maker/checker.")
     finally:
         db.close()
 

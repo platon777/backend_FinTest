@@ -24,8 +24,9 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str = "change-me-in-a-real-environment"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Durées adaptées au prototype local; elles restent configurables par environnement.
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
     ALLOW_CREDENTIALS: bool = True

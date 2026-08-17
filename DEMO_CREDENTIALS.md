@@ -12,6 +12,8 @@ Mot de passe commun : `ProfinDemo!2026`
 | Sophie Laurent | `sophie.checker@demo.profin.ht` | Individuelle, modérée | Rôle `MANDATAIRE` sur `INV-2026-00001`; profil de validation |
 | Nadia Bernard | `nadia.checker@demo.profin.ht` | Individuelle, modérée | Rôle `MANDATAIRE` sur le compte Marie; peut traiter une correction après sa création |
 | Nexa Patrimoine S.A. | `nexa.patrimoine@demo.profin.ht` | Institutionnel, trésorerie | USD `INV-2026-00005`, HTG `TRE-2026-00006`, position Caraïbes 2029 et opérations en attente/rejetées |
+| Julien Bernard | `julien.bernard@demo.profin.ht` | Individuel, conservateur | USD `INV-2026-00007`, obligation BRH 2027, coupon en attente; Sophie est mandataire et Paul observateur |
+| Aline Michel | `aline.michel@demo.profin.ht` | Individuelle, modérée | USD `INV-2026-00008`, obligation EDH 2028, coupon planifié; Sophie est mandataire |
 
 ## Parcours de présentation
 
@@ -64,7 +66,16 @@ Marie dispose aussi de `OBL-BRH-2026`, une position de 5 000 USD arrivant a eche
 
 ### Rendement, coupons et frais
 
-Le portefeuille Marie porte un rendement annualise calcule sur les flux dates, des frais d'entree par instrument et des coupons BRH. Le jeu de donnees contient un coupon deja paye, un coupon en attente de validation et un coupon futur planifie.
+Le portefeuille Marie porte un rendement annualise calcule sur les flux dates, des frais d'entree par instrument et des coupons BRH. Les positions affichent aussi les interets courus : ils sont acquis selon le temps de detention, mais ne sont pas encore necessairement verses sur le compte.
+
+Le jeu de donnees permet de montrer plusieurs etats :
+
+- Marie : coupons BRH 2027 deja payes, coupon EDH 2028 planifie et coupon BRH 2026 planifie avant une echeance proche;
+- Julien : coupon BRH 2027 de 275 USD en attente de validation;
+- Aline : coupon EDH 2028 de 1 125 USD planifie;
+- Nexa : coupon Caraibes 2029 de 5 175 USD planifie, visible par Paul en consultation seule.
+
+Ainsi, le total des interets courus n'est pas confondu avec le solde disponible : le premier represente un revenu accumule sur les positions, tandis que le second represente l'argent utilisable immediatement.
 
 ### Correction comptable
 

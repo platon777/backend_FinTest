@@ -41,6 +41,8 @@ def test_assistant_uses_only_authenticated_client_context(client_app, demo_data,
     assert "INV-TEST-001" in prompt
     assert "INV-TEST-002" not in prompt
     assert "Password!123" not in prompt
+    assert "tma_percentage" in prompt
+    assert "obligations" in prompt
 
 
 def test_assistant_does_not_mutate_financial_data(client_app, demo_data, db_session, monkeypatch):
